@@ -1,5 +1,6 @@
 package com.mediasaver.core.download.worker
 
+import android.util.Log
 import com.mediasaver.core.common.HashUtils
 import com.mediasaver.core.database.dao.DownloadDao
 import com.mediasaver.core.download.muxing.MuxingEngine
@@ -21,6 +22,8 @@ import java.io.File
 import java.io.FileOutputStream
 import javax.inject.Inject
 import javax.inject.Singleton
+
+private const val TAG = "MediaSaver:Download"
 
 /**
  * Snapshot of active download progress, transfer speed, and estimated time remaining.
@@ -61,34 +64,42 @@ class DownloadWorker @Inject constructor(
         videoStream: StreamInfo,
         audioStream: StreamInfo? = null
     ): Result<String> = withContext(Dispatchers.IO) {
+        Log.d(TAG, "executeDownload: starting download $downloadId")
         val tempFile = tempFileManager.createTempDownloadFile(downloadId)
         val tempVideoFile = if (audioStream != null) tempFileManager.createTempDownloadFile(downloadId, "_vid.tmp") else tempFile
         val tempAudioFile = if (audioStream != null) tempFileManager.createTempDownloadFile(downloadId, "_aud.tmp") else null
 
         try {
             // Explicit transition: QUEUED -> EXTRACTING
+            Log.d(TAG, "executeDownload: updating status to EXTRACTING for $downloadId")
             downloadDao.updateStatus(downloadId, "EXTRACTING")
 
             // Check storage headroom before streaming
             val estimatedBytes = (videoStream.fileSize ?: 0L) + (audioStream?.fileSize ?: 0L)
             if (estimatedBytes > 0L && !tempFileManager.hasAvailableStorage(estimatedBytes)) {
+                Log.e(TAG, "executeDownload: storage full for $downloadId, estimatedBytes=$estimatedBytes")
                 throw AppError.StorageFull(estimatedBytes)
             }
 
             // Explicit transition: EXTRACTING -> DOWNLOADING
+            Log.d(TAG, "executeDownload: updating status to DOWNLOADING for $downloadId")
             downloadDao.updateStatus(downloadId, "DOWNLOADING")
 
             // 1. Download primary/video stream
+            Log.d(TAG, "executeDownload: downloading video stream for $downloadId")
             downloadStreamToFile(downloadId, videoStream.url, tempVideoFile)
 
             // 2. If adaptive stream (separate audio track), download audio and mux
             val finalLocalFile = if (audioStream != null && tempAudioFile != null) {
+                Log.d(TAG, "executeDownload: downloading audio stream for $downloadId")
                 downloadStreamToFile(downloadId, audioStream.url, tempAudioFile)
 
                 // Explicit transition: DOWNLOADING -> MUXING
+                Log.d(TAG, "executeDownload: updating status to MUXING for $downloadId")
                 downloadDao.updateStatus(downloadId, "MUXING")
                 val muxResult = muxingEngine.muxAudioVideo(tempVideoFile, tempAudioFile, tempFile)
                 if (muxResult.isFailure) {
+                    Log.e(TAG, "executeDownload: muxing failed for $downloadId", muxResult.exceptionOrNull())
                     throw muxResult.exceptionOrNull() ?: AppError.MuxingFailed()
                 }
                 muxResult.getOrThrow()
@@ -97,9 +108,11 @@ class DownloadWorker @Inject constructor(
             }
 
             // 3. Verify file integrity and calculate SHA-256 hash
+            Log.d(TAG, "executeDownload: calculating hash for $downloadId")
             val fileHash = HashUtils.sha256(finalLocalFile)
 
             // 4. Atomic move to shared MediaStore gallery
+            Log.d(TAG, "executeDownload: saving to MediaStore for $downloadId")
             val mediaStoreUri = mediaStoreManager.saveVideo(
                 sourceFile = finalLocalFile,
                 fileName = targetFileName,
@@ -107,9 +120,11 @@ class DownloadWorker @Inject constructor(
             ).getOrThrow()
 
             // 5. Clean up temporary working file
+            Log.d(TAG, "executeDownload: deleting temp file for $downloadId")
             tempFileManager.deleteTempFile(finalLocalFile)
 
             // 6. Explicit transition: MUXING/DOWNLOADING -> COMPLETED
+            Log.d(TAG, "executeDownload: marking as COMPLETED for $downloadId")
             val uriString = mediaStoreUri.toString()
             downloadDao.markCompleted(
                 id = downloadId,
@@ -127,8 +142,10 @@ class DownloadWorker @Inject constructor(
                 )
             )
 
+            Log.d(TAG, "executeDownload: completed successfully for $downloadId")
             Result.success(uriString)
         } catch (e: CancellationException) {
+            Log.d(TAG, "executeDownload: cancelled for $downloadId")
             // Clean up temporary files on cancellation
             tempFileManager.deleteTempFile(tempFile)
             tempFileManager.deleteTempFile(tempVideoFile)
@@ -136,6 +153,7 @@ class DownloadWorker @Inject constructor(
             downloadDao.markCancelled(downloadId)
             throw e
         } catch (e: Exception) {
+            Log.e(TAG, "executeDownload: failed for $downloadId with ${e.javaClass.simpleName}: ${e.message}", e)
             tempFileManager.deleteTempFile(tempFile)
             tempFileManager.deleteTempFile(tempVideoFile)
             tempFileManager.deleteTempFile(tempAudioFile)
@@ -152,6 +170,7 @@ class DownloadWorker @Inject constructor(
         streamUrl: String,
         destinationFile: File
     ) = withContext(Dispatchers.IO) {
+        Log.d(TAG, "downloadStreamToFile: starting for $downloadId")
         val request = Request.Builder()
             .url(streamUrl)
             .header("User-Agent", "Mozilla/5.0 (Android; Mobile)")
@@ -160,6 +179,7 @@ class DownloadWorker @Inject constructor(
         val response = okHttpClient.newCall(request).execute()
         response.use { resp ->
             if (!resp.isSuccessful) {
+                Log.e(TAG, "downloadStreamToFile: HTTP error ${resp.code} for $downloadId")
                 throw AppError.DownloadFailed(resp.code)
             }
 
@@ -168,6 +188,7 @@ class DownloadWorker @Inject constructor(
 
             // Check storage capacity
             if (totalBytes != null && !tempFileManager.hasAvailableStorage(totalBytes)) {
+                Log.e(TAG, "downloadStreamToFile: storage full for $downloadId, totalBytes=$totalBytes")
                 throw AppError.StorageFull(totalBytes)
             }
 
@@ -231,5 +252,6 @@ class DownloadWorker @Inject constructor(
                 }
             }
         }
+        Log.d(TAG, "downloadStreamToFile: completed for $downloadId, downloadedBytes=$downloadedBytes")
     }
 }
