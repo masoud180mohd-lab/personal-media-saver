@@ -24,7 +24,8 @@ object PlatformDetector {
     )
 
     private val INSTAGRAM_HOSTS = setOf(
-        "instagram.com"
+        "instagram.com",
+        "instagr.am"
     )
 
     /**
