@@ -110,6 +110,15 @@ interface DownloadDao {
     @Query("SELECT * FROM downloads WHERE url = :url AND platform = :platform ORDER BY createdAt DESC LIMIT 1")
     suspend fun findByUrlAndPlatform(url: String, platform: String): DownloadEntity?
 
+    @Query("SELECT * FROM downloads WHERE mediaId = :mediaId AND platform = :platform ORDER BY createdAt DESC LIMIT 1")
+    suspend fun findByMediaIdAndPlatform(mediaId: String, platform: String): DownloadEntity?
+
+    @Query("SELECT * FROM downloads WHERE fileHash = :fileHash AND status = 'COMPLETED' LIMIT 1")
+    suspend fun findByFileHash(fileHash: String): DownloadEntity?
+
+    @Query("UPDATE downloads SET retryCount = :retryCount, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun updateRetryCount(id: String, retryCount: Int, updatedAt: Long = System.currentTimeMillis())
+
     @Query("SELECT * FROM downloads WHERE status IN ('QUEUED', 'EXTRACTING', 'DOWNLOADING', 'MUXING') ORDER BY createdAt ASC")
     suspend fun findActiveDownloads(): List<DownloadEntity>
 

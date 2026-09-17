@@ -1,6 +1,8 @@
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.ksp)
+    alias(libs.plugins.hilt)
 }
 
 android {
@@ -25,10 +27,14 @@ android {
 
 dependencies {
     implementation(project(":core:model"))
+    implementation(project(":core:domain"))
     implementation(project(":core:common"))
     implementation(project(":core:database"))
     implementation(project(":core:storage"))
     implementation(project(":core:network"))
+
+    implementation(libs.hilt.android)
+    ksp(libs.hilt.compiler)
 
     implementation(libs.okhttp)
     implementation(libs.androidx.work.runtime.ktx)
