@@ -51,6 +51,12 @@
             </intent-filter>
         </activity>
 
+        <!-- Download foreground service -->
+        <service
+            android:name=".core.download.service.DownloadService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false" />
+
     </application>
 
 </manifest>

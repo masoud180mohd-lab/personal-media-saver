@@ -1,27 +1,43 @@
-*.iml
-.gradle
-/local.properties
-/.idea/
-.idea/
-.idea/caches/
-.idea/libraries/
-.idea/modules.xml
-.idea/workspace.xml
-.idea/navEditor.xml
-.idea/assetWizardSettings.xml
-.DS_Store
-/build
-/*/build
-/*/*/build
-captures/
-.externalNativeBuild
-.cxx
+```
+# Build artifacts
 *.apk
-*.aab
-*.keystore
-*.jks
-output.json
+*.aar
+*.jar
+*.class
+*.dex
 
-# OS files
+# Gradle
+.gradle/
+build/
+intermediates/
+outputs/
+
+# Android
+*.ap_
+*.aab
+local.properties
+
+# Dependencies
+.libs/
+.externalNativeBuild/
+
+# Logs
+*.log
+
+# IDE
+.idea/
+*.iml
+*.iws
+.vscode/
+
+# Temp files
+*.tmp
+*~
+.DS_Store
 Thumbs.db
-Desktop.ini
+
+# Environment
+.env
+.env.local
+*.env.*
+```

@@ -1,6 +1,7 @@
 package com.mediasaver.core.download.queue
 
 import android.content.Context
+import android.util.Log
 import com.mediasaver.core.database.dao.DownloadDao
 import com.mediasaver.core.database.dao.StreamOptionDao
 import com.mediasaver.core.database.entity.DownloadEntity
@@ -29,6 +30,8 @@ import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
+
+private const val TAG = "MediaSaver:Download"
 
 /**
  * Persistent download queue manager backed by Room.
@@ -79,9 +82,11 @@ class DownloadQueueManager @Inject constructor(
         videoStream: StreamInfo,
         audioStream: StreamInfo? = null
     ) {
+        Log.d(TAG, "enqueue: starting to enqueue download ${task.id}")
         queueMutex.withLock {
             val entity = task.toEntity().copy(status = DownloadStatus.QUEUED.name)
             downloadDao.insert(entity)
+            Log.d(TAG, "enqueue: inserted download ${task.id} with status QUEUED")
 
             val streamEntities = mutableListOf<StreamOptionEntity>()
             streamEntities.add(
@@ -119,10 +124,14 @@ class DownloadQueueManager @Inject constructor(
             }
 
             streamOptionDao.insertAll(streamEntities)
+            Log.d(TAG, "enqueue: inserted stream entities for ${task.id}")
         }
 
+        Log.d(TAG, "enqueue: calling DownloadService.start()")
         DownloadService.start(context)
+        Log.d(TAG, "enqueue: calling processNextInQueue()")
         processNextInQueue()
+        Log.d(TAG, "enqueue: completed for ${task.id}")
     }
 
     /**
@@ -198,22 +207,31 @@ class DownloadQueueManager @Inject constructor(
         queueScope.launch {
             queueMutex.withLock {
                 val currentRunning = activeJobs.size
-                if (currentRunning >= maxConcurrentDownloads) return@withLock
+                Log.d(TAG, "processNextInQueue: currentRunning=$currentRunning, maxConcurrentDownloads=$maxConcurrentDownloads")
+                if (currentRunning >= maxConcurrentDownloads) {
+                    Log.d(TAG, "processNextInQueue: at capacity, returning")
+                    return@withLock
+                }
 
                 val capacity = maxConcurrentDownloads - currentRunning
                 val activeDownloads = downloadDao.findActiveDownloads()
                 val queuedTasks = activeDownloads.filter { it.status == DownloadStatus.QUEUED.name }
                     .take(capacity)
 
+                Log.d(TAG, "processNextInQueue: found ${queuedTasks.size} queued tasks to process")
                 for (taskEntity in queuedTasks) {
                     val downloadId = taskEntity.id
-                    if (activeJobs.containsKey(downloadId)) continue
+                    if (activeJobs.containsKey(downloadId)) {
+                        Log.d(TAG, "processNextInQueue: job already exists for $downloadId, skipping")
+                        continue
+                    }
 
                     val streams = streamOptionDao.getByDownloadId(downloadId)
                     val videoStreamEntity = streams.firstOrNull { !it.isAudioOnly }
                     val audioStreamEntity = streams.firstOrNull { it.isAudioOnly }
 
                     if (videoStreamEntity == null) {
+                        Log.e(TAG, "processNextInQueue: missing video stream for $downloadId, marking as failed")
                         downloadDao.markFailed(downloadId, "MissingStream", "No stream URL found for task")
                         continue
                     }
@@ -248,6 +266,7 @@ class DownloadQueueManager @Inject constructor(
                     val platform = PlatformId.fromString(taskEntity.platform)
 
                     val job = queueScope.launch {
+                        Log.d(TAG, "processNextInQueue: starting worker for $downloadId")
                         try {
                             val result = downloadWorker.executeDownload(
                                 downloadId = downloadId,
@@ -260,10 +279,12 @@ class DownloadQueueManager @Inject constructor(
                                 val error = result.exceptionOrNull() ?: Exception("Download failed")
                                 val task = downloadDao.getById(downloadId)
                                 val currentAttempt = task?.retryCount ?: 0
+                                Log.e(TAG, "processNextInQueue: download $downloadId failed with $error, attempt=$currentAttempt")
                                 if (retryPolicy.shouldRetry(currentAttempt, error)) {
                                     val nextAttempt = currentAttempt + 1
                                     downloadDao.updateRetryCount(downloadId, nextAttempt)
                                     val delayMs = retryPolicy.getBackoffDelayMillis(currentAttempt, error)
+                                    Log.d(TAG, "processNextInQueue: scheduling retry for $downloadId after ${delayMs}ms")
                                     queueScope.launch {
                                         delay(delayMs)
                                         queueMutex.withLock {
@@ -275,16 +296,23 @@ class DownloadQueueManager @Inject constructor(
                                         processNextInQueue()
                                     }
                                 }
+                            } else {
+                                Log.d(TAG, "processNextInQueue: download $downloadId completed successfully")
                             }
-                        } catch (_: CancellationException) {
+                        } catch (e: CancellationException) {
+                            Log.d(TAG, "processNextInQueue: download $downloadId was cancelled")
                             // Handled inside worker
+                        } catch (e: Exception) {
+                            Log.e(TAG, "processNextInQueue: unexpected exception for $downloadId: ${e.message}", e)
                         } finally {
                             activeJobs.remove(downloadId)
+                            Log.d(TAG, "processNextInQueue: job removed for $downloadId, calling processNextInQueue()")
                             processNextInQueue()
                         }
                     }
 
                     activeJobs[downloadId] = job
+                    Log.d(TAG, "processNextInQueue: job added to activeJobs for $downloadId")
                 }
             }
         }
