@@ -5,17 +5,20 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import com.mediasaver.core.domain.usecase.GetActiveDownloadsUseCase
+import com.mediasaver.core.domain.usecase.GetSettingsUseCase
+import com.mediasaver.core.model.ThemeMode
+import com.mediasaver.ui.MediaSaverApp
+import com.mediasaver.ui.theme.MediaSaverTheme
 import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 
 /**
  * Single activity entry point hosting Compose navigation and handling incoming Share Sheet intents.
@@ -23,24 +26,38 @@ import dagger.hilt.android.AndroidEntryPoint
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
+    @Inject
+    lateinit var getSettingsUseCase: GetSettingsUseCase
+
+    @Inject
+    lateinit var getActiveDownloadsUseCase: GetActiveDownloadsUseCase
+
+    private val sharedUrlState = mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        val sharedUrl = extractSharedUrl(intent)
+        sharedUrlState.value = extractSharedUrl(intent)
 
         setContent {
-            MaterialTheme {
+            val settings by getSettingsUseCase().collectAsState(initial = null)
+            val isSystemDark = isSystemInDarkTheme()
+
+            val isDark = when (settings?.themeMode) {
+                ThemeMode.DARK -> true
+                ThemeMode.LIGHT -> false
+                else -> isSystemDark
+            }
+
+            MediaSaverTheme(darkTheme = isDark) {
                 Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
+                    modifier = Modifier.fillMaxSize()
                 ) {
-                    Scaffold { innerPadding ->
-                        MediaSaverAppPlaceholder(
-                            sharedUrl = sharedUrl,
-                            modifier = Modifier.padding(innerPadding)
-                        )
-                    }
+                    MediaSaverApp(
+                        sharedUrl = sharedUrlState.value,
+                        getActiveDownloadsUseCase = getActiveDownloadsUseCase
+                    )
                 }
             }
         }
@@ -49,7 +66,10 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        // Handle URL shared when activity is already in foreground/backstack
+        val newSharedUrl = extractSharedUrl(intent)
+        if (!newSharedUrl.isNullOrBlank()) {
+            sharedUrlState.value = newSharedUrl
+        }
     }
 
     private fun extractSharedUrl(intent: Intent?): String? {
@@ -60,19 +80,3 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable
-fun MediaSaverAppPlaceholder(sharedUrl: String?, modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = if (sharedUrl != null) {
-                "Received URL: $sharedUrl"
-            } else {
-                "Personal Media Saver"
-            },
-            style = MaterialTheme.typography.headlineMedium
-        )
-    }
-}
