@@ -1,6 +1,7 @@
 package com.mediasaver.platform.instagram
 
 import android.util.Log
+import com.mediasaver.core.common.AppLogger
 import com.mediasaver.core.model.PlatformId
 import com.mediasaver.core.model.error.AppError
 import kotlinx.coroutines.Dispatchers
@@ -375,7 +376,7 @@ class InstagramExtractor @Inject constructor(
 
         val author = ogTitle?.groupValues?.getOrNull(1)?.let {
             if (it.contains("on Instagram:")) {
-                it.substringBefore("on Instagram:").trim().removePrefix("@")
+                unescapeHtmlEntities(it.substringBefore("on Instagram:").trim().removePrefix("@"))
             } else {
                 null
             }
@@ -386,62 +387,11 @@ class InstagramExtractor @Inject constructor(
             return Result.failure(AppError.ExtractionFailed(PlatformId.INSTAGRAM))
         }
 
-        // Robust carousel parsing for V1.1.1
-        val carouselItems = mutableListOf<InstagramCarouselItem>()
-        
-        // 1. Try to extract sidecar arrays
-        var sidecarJson: String? = null
-        val sidecarIndex = html.indexOf("\"edge_sidecar_to_children\"")
-        val carouselMediaIndex = html.indexOf("\"carousel_media\"")
-        
-        if (sidecarIndex != -1) {
-            val scriptEnd = html.indexOf("</script>", sidecarIndex)
-            if (scriptEnd != -1) {
-                sidecarJson = html.substring(sidecarIndex, scriptEnd)
-            }
-        } else if (carouselMediaIndex != -1) {
-            val scriptEnd = html.indexOf("</script>", carouselMediaIndex)
-            if (scriptEnd != -1) {
-                sidecarJson = html.substring(carouselMediaIndex, scriptEnd)
-            }
-        }
-            
-        if (sidecarJson != null) {
-            val nodes = sidecarJson.split(Regex("""\{\s*"node"\s*:|(?=\{\s*"id"\s*:)"""))
-            for (node in nodes) {
-                val vMatch = Regex("""["']video_url["']\s*:\s*["']([^"']+)["']""").find(node)
-                val iMatch = Regex("""["']display_url["']\s*:\s*["']([^"']+)["']""").find(node)
-                val vUrl = vMatch?.groupValues?.getOrNull(1)?.let { sanitizeUrl(it) }?.takeIf { !it.startsWith("data:") }
-                val iUrl = iMatch?.groupValues?.getOrNull(1)?.let { sanitizeUrl(it) }?.takeIf { !it.startsWith("data:") }
-                if (vUrl != null || iUrl != null) {
-                    carouselItems.add(InstagramCarouselItem(vUrl, iUrl, vUrl != null || iUrl?.contains(".mp4") == true))
-                }
-            }
-        }
-        
-        // 2. Fallback: permissive regex matching without brace constraints
-        if (carouselItems.isEmpty()) {
-            val matches = Regex("""(["'])(video_url|display_url)\1\s*:\s*(["'])([^"']+)\3""").findAll(html)
-            for (match in matches) {
-                val key = match.groupValues[2]
-                val url = sanitizeUrl(match.groupValues[4]).takeIf { !it.startsWith("data:") } ?: continue
-                val isVid = key == "video_url" || url.contains(".mp4")
-                if (isVid) {
-                    carouselItems.add(InstagramCarouselItem(videoUrl = url, imageUrl = null, isVideo = true))
-                } else {
-                    carouselItems.add(InstagramCarouselItem(videoUrl = null, imageUrl = url, isVideo = false))
-                }
-            }
-        }
-        
-        val distinctCarouselItems = carouselItems.distinctBy { it.videoUrl ?: it.imageUrl }
-            .toMutableList()
-            
-        if (distinctCarouselItems.isNotEmpty()) {
-            val hasMain = distinctCarouselItems.any { it.videoUrl == videoUrl || (it.imageUrl == imageUrl && imageUrl != null) }
-            if (!hasMain && (videoUrl != null || imageUrl != null)) {
-                distinctCarouselItems.add(0, InstagramCarouselItem(videoUrl, imageUrl, isVideo))
-            }
+        val carouselItems = extractCarouselItems(html)
+        if (carouselItems.isNotEmpty()) {
+            AppLogger.d(TAG, "Layer 2 carousel scan used; carousel item count=${carouselItems.size}")
+        } else {
+            AppLogger.d(TAG, "OpenGraph layer used; carousel item count=0")
         }
 
         return Result.success(
@@ -454,9 +404,63 @@ class InstagramExtractor @Inject constructor(
                 imageUrl = imageUrl,
                 isVideo = isVideo,
                 durationSeconds = null,
-                carouselItems = distinctCarouselItems
+                carouselItems = carouselItems
             )
         )
+    }
+
+    /**
+     * Scans the embedded carousel containers without requiring valid JSON. Instagram
+     * frequently embeds escaped or partially hydrated JSON in the HTML response.
+     */
+    internal fun extractCarouselItems(html: String): List<InstagramCarouselItem> {
+        val markers = listOf("carousel_media", "edge_sidecar_to_children", "shortcode_media")
+        val regions = markers.mapNotNull { marker ->
+            val markerIndex = html.indexOf(marker)
+            if (markerIndex < 0) return@mapNotNull null
+            val scriptEnd = html.indexOf("</script>", markerIndex).let { if (it < 0) html.length else it }
+            html.substring(markerIndex, scriptEnd)
+        }
+
+        val itemPattern = Regex("""["'](display_url|video_url)["']\s*:\s*["']([^"']+)["']""")
+        val items = mutableListOf<InstagramCarouselItem>()
+
+        for (region in regions) {
+            val signals = itemPattern.findAll(region).toList()
+            val displaySignals = signals.filter { it.groupValues[1] == "display_url" }
+            for ((index, display) in displaySignals.withIndex()) {
+                val nextDisplayStart = displaySignals.getOrNull(index + 1)?.range?.first ?: region.length
+                val itemRegion = region.substring(display.range.first, nextDisplayStart)
+                val imageUrl = sanitizeUrl(display.groupValues[2]).takeIf { !it.startsWith("data:") }
+                val videoUrl = itemPattern.findAll(itemRegion)
+                    .firstOrNull { it.groupValues[1] == "video_url" }
+                    ?.groupValues?.get(2)
+                    ?.let(::sanitizeUrl)
+                    ?.takeIf { !it.startsWith("data:") }
+                if (imageUrl != null || videoUrl != null) {
+                    items.add(
+                        InstagramCarouselItem(
+                            videoUrl = videoUrl,
+                            imageUrl = imageUrl,
+                            isVideo = videoUrl != null || imageUrl?.endsWith(".mp4") == true
+                        )
+                    )
+                }
+            }
+        }
+
+        if (items.isEmpty()) {
+            for (match in itemPattern.findAll(html)) {
+                val url = sanitizeUrl(match.groupValues[2]).takeIf { !it.startsWith("data:") } ?: continue
+                if (match.groupValues[1] == "video_url" || url.contains(".mp4")) {
+                    items.add(InstagramCarouselItem(videoUrl = url, imageUrl = null, isVideo = true))
+                } else {
+                    items.add(InstagramCarouselItem(videoUrl = null, imageUrl = url, isVideo = false))
+                }
+            }
+        }
+
+        return items.distinctBy { it.videoUrl ?: it.imageUrl }
     }
 
     /**
@@ -531,11 +535,13 @@ class InstagramExtractor @Inject constructor(
 
         // Extract caption text
         val captionMatch = Regex(""""text"\s*:\s*"([^"]{1,500})"""").find(json)
-        val title = captionMatch?.groupValues?.getOrNull(1)?.let { unescapeJsonString(it) }?.take(150)
+        val title = captionMatch?.groupValues?.getOrNull(1)
+            ?.let { unescapeHtmlEntities(unescapeJsonString(it)) }
+            ?.take(150)
 
         // Extract username
         val usernameMatch = Regex(""""username"\s*:\s*"([^"]+)"""").find(json)
-        val author = usernameMatch?.groupValues?.getOrNull(1)
+        val author = usernameMatch?.groupValues?.getOrNull(1)?.let(::unescapeHtmlEntities)
 
         val isVideo = !videoUrl.isNullOrBlank()
         if (!isVideo && imageUrl.isNullOrBlank()) {
@@ -597,7 +603,7 @@ class InstagramExtractor @Inject constructor(
                 imageUrl = imageUrl,
                 isVideo = isVideo,
                 durationSeconds = null,
-                carouselItems = distinctCarouselItems
+                carouselItems = carouselItems
             )
         )
     }

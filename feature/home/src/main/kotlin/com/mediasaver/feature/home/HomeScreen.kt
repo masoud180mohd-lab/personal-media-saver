@@ -55,6 +55,7 @@ import com.mediasaver.core.ui.components.ErrorState
 import com.mediasaver.core.ui.components.MediaPreviewCard
 import com.mediasaver.core.ui.components.QualityChipRow
 import com.mediasaver.core.ui.components.UrlInputCard
+import com.mediasaver.core.ui.components.shouldUseCarouselPager
 import com.mediasaver.core.ui.theme.MediaSaverTheme
 import com.mediasaver.core.ui.util.rememberIsReduceMotionEnabled
 
@@ -133,7 +134,7 @@ fun HomeScreenContent(
     val isReduceMotion = rememberIsReduceMotionEnabled()
     val haptic = LocalHapticFeedback.current
     
-    val isCarousel = uiState.availableStreams.size > 1 && uiState.availableStreams.all { it.quality?.startsWith("Slide ") == true }
+    val isCarousel = shouldUseCarouselPager(uiState.availableStreams)
     var activeCarouselSlide by remember { androidx.compose.runtime.mutableStateOf<StreamInfo?>(null) }
     
     LaunchedEffect(uiState.availableStreams) {
@@ -213,7 +214,10 @@ fun HomeScreenContent(
                             }
                         )
 
-                        if (uiState.availableStreams.isNotEmpty() && !isCarousel) {
+                        if (
+                            uiState.availableStreams.isNotEmpty() &&
+                            !(media.platform == PlatformId.INSTAGRAM && uiState.availableStreams.size == 1)
+                        ) {
                             QualityChipRow(
                                 availableStreams = uiState.availableStreams,
                                 selectedStream = uiState.selectedStream,

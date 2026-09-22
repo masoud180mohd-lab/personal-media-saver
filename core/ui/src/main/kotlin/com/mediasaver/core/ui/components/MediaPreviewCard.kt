@@ -70,7 +70,7 @@ fun MediaPreviewCard(
     onActiveSlideChanged: (StreamInfo) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val isCarousel = availableStreams.size > 1 && availableStreams.all { it.quality?.startsWith("Slide ") == true }
+    val isCarousel = shouldUseCarouselPager(availableStreams)
 
     Card(
         shape = CardShape,
@@ -99,6 +99,7 @@ fun MediaPreviewCard(
                         snapshotFlow { pagerState.currentPage }.collect { page ->
                             onActiveSlideChanged(availableStreams[page])
                         }
+
                     }
                     
                     HorizontalPager(
@@ -278,6 +279,9 @@ fun MediaPreviewCard(
         }
     }
 }
+
+fun shouldUseCarouselPager(availableStreams: List<StreamInfo>): Boolean =
+    availableStreams.size > 1
 
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
