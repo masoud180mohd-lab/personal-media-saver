@@ -37,6 +37,7 @@ include(":core:database")
 include(":core:network")
 include(":core:download")
 include(":core:storage")
+include(":core:ui")
 
 // Platform adapters
 include(":platform:youtube")

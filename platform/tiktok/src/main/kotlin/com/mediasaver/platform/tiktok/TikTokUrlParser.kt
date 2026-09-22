@@ -127,7 +127,7 @@ object TikTokUrlParser {
             val request = Request.Builder()
                 .url(currentUrl)
                 .head()
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
                 .build()
 
             val response = try {
@@ -137,6 +137,11 @@ object TikTokUrlParser {
             }
 
             response.use { resp ->
+                val finalUrl = resp.request.url.toString()
+                if (extractVideoId(finalUrl) != null) {
+                    return@withContext finalUrl
+                }
+
                 val code = resp.code
                 if (code in 300..399) {
                     val location = resp.header("Location")
@@ -157,7 +162,7 @@ object TikTokUrlParser {
                         return@withContext currentUrl
                     }
                 } else {
-                    return@withContext currentUrl
+                    return@withContext finalUrl.ifBlank { currentUrl }
                 }
             }
         }

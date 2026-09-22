@@ -1,5 +1,6 @@
 package com.mediasaver.core.network.di
 
+import com.mediasaver.core.network.interceptor.SsrfRedirectInterceptor
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -17,13 +18,21 @@ object NetworkModule {
 
     @Provides
     @Singleton
-    fun provideOkHttpClient(): OkHttpClient {
+    fun provideSsrfRedirectInterceptor(): SsrfRedirectInterceptor {
+        return SsrfRedirectInterceptor()
+    }
+
+    @Provides
+    @Singleton
+    fun provideOkHttpClient(ssrfRedirectInterceptor: SsrfRedirectInterceptor): OkHttpClient {
         return OkHttpClient.Builder()
-            .connectTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS)
+            .connectTimeout(60, TimeUnit.SECONDS)
+            .readTimeout(300, TimeUnit.SECONDS)
             .writeTimeout(60, TimeUnit.SECONDS)
-            .followRedirects(true)
-            .followSslRedirects(true)
+            // Disable default automatic redirects; interceptor verifies every hop against SSRF & hop limits
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .addInterceptor(ssrfRedirectInterceptor)
             .retryOnConnectionFailure(true)
             .build()
     }

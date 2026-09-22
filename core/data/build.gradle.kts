@@ -28,9 +28,6 @@ android {
 dependencies {
     implementation(project(":core:model"))
     implementation(project(":core:domain"))
-    implementation(project(":core:database"))
-    implementation(project(":core:network"))
-    implementation(project(":core:storage"))
 
     implementation(libs.datastore.preferences)
     implementation(libs.kotlinx.coroutines.android)

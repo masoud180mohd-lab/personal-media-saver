@@ -1,0 +1,82 @@
+package com.mediasaver.core.ui.theme
+
+import androidx.compose.ui.graphics.Color
+
+// Dark-first palette using M3 tonal surfaces
+val DarkBackground = Color(0xFF0B0E13)
+val DarkSurface = Color(0xFF0B0E13)
+val DarkSurfaceContainerLowest = Color(0xFF07090C)
+val DarkSurfaceContainerLow = Color(0xFF12161D)
+val DarkSurfaceContainer = Color(0xFF161B24)
+val DarkSurfaceContainerHigh = Color(0xFF1D232E)
+val DarkSurfaceContainerHighest = Color(0xFF232A36)
+val DarkSurfaceBright = Color(0xFF232A36)
+val DarkOnSurface = Color(0xFFE2E4E9)
+val DarkOnSurfaceVariant = Color(0xFF9EA3AE)
+val DarkOutline = Color(0xFF38404E)
+val DarkOutlineVariant = Color(0xFF242A36)
+
+// Fallback teal dark / Clean Utility Mint (#4FD8C6 brand primary)
+val DarkPrimary = Color(0xFF4FD8C6)
+val DarkOnPrimary = Color(0xFF003732)
+val DarkPrimaryContainer = Color(0xFF00504A)
+val DarkOnPrimaryContainer = Color(0xFF6FF5E2)
+
+val DarkSecondary = Color(0xFF80CBC4)
+val DarkOnSecondary = Color(0xFF003732)
+val DarkSecondaryContainer = Color(0xFF1F4E48)
+val DarkOnSecondaryContainer = Color(0xFFA7F0E4)
+
+val DarkTertiary = Color(0xFF81D4FA)
+val DarkOnTertiary = Color(0xFF003547)
+val DarkTertiaryContainer = Color(0xFF004D65)
+val DarkOnTertiaryContainer = Color(0xFFBCE9FF)
+
+// Tonal error container (never pure red banners)
+val DarkError = Color(0xFFFFB4AB)
+val DarkOnError = Color(0xFF690005)
+val DarkErrorContainer = Color(0xFF371E20)
+val DarkOnErrorContainer = Color(0xFFFFDAD6)
+
+// Light theme parity with soft neutral surfaces (#F6F7F9 base)
+val LightBackground = Color(0xFFF6F7F9)
+val LightSurface = Color(0xFFF6F7F9)
+val LightSurfaceContainerLowest = Color(0xFFFFFFFF)
+val LightSurfaceContainerLow = Color(0xFFF0F1F5)
+val LightSurfaceContainer = Color(0xFFEAECEF)
+val LightSurfaceContainerHigh = Color(0xFFE4E6EB)
+val LightSurfaceContainerHighest = Color(0xFFDEE0E6)
+val LightSurfaceBright = Color(0xFFF6F7F9)
+val LightOnSurface = Color(0xFF191C20)
+val LightOnSurfaceVariant = Color(0xFF44474E)
+val LightOutline = Color(0xFF74777F)
+val LightOutlineVariant = Color(0xFFC4C6D0)
+
+// Fallback teal light (#006A60 light seed)
+val LightPrimary = Color(0xFF006A60)
+val LightOnPrimary = Color(0xFFFFFFFF)
+val LightPrimaryContainer = Color(0xFF70F7E5)
+val LightOnPrimaryContainer = Color(0xFF00201D)
+
+val LightSecondary = Color(0xFF4A635F)
+val LightOnSecondary = Color(0xFFFFFFFF)
+val LightSecondaryContainer = Color(0xFFCCE8E3)
+val LightOnSecondaryContainer = Color(0xFF05201C)
+
+val LightTertiary = Color(0xFF006684)
+val LightOnTertiary = Color(0xFFFFFFFF)
+val LightTertiaryContainer = Color(0xFFBEE9FF)
+val LightOnTertiaryContainer = Color(0xFF001F2A)
+
+val LightError = Color(0xFFBA1A1A)
+val LightOnError = Color(0xFFFFFFFF)
+val LightErrorContainer = Color(0xFFFFDAD6)
+val LightOnErrorContainer = Color(0xFF410002)
+
+// Platform brand colors (ONLY as accent: badge, selection ring)
+val PlatformYouTube = Color(0xFFFF4438)
+val PlatformTikTok = Color(0xFF25F4EE)
+val PlatformWhatsApp = Color(0xFF25D366)
+val PlatformInstagram = Color(0xFFE1306C)
+val PlatformTwitter = Color(0xFF1DA1F2)
+val PlatformUnknown = Color(0xFF8E919A)

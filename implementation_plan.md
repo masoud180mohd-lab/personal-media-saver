@@ -1528,3 +1528,44 @@ flowchart TB
 **A fully on-device Android application built with Kotlin, Jetpack Compose, and standard Android Jetpack components.** It uses NewPipe Extractor for YouTube/TikTok stream extraction, FFmpegKit for adaptive stream muxing, SAF for WhatsApp Status access, and MediaStore for organized file storage. It has zero backend, zero cloud services, zero analytics, and zero cost. Platform integrations are isolated behind a common adapter interface, making it straightforward to update individual platforms or add new ones. The architecture accepts that extraction can break and treats graceful degradation as a first-class concern.
 
 This is the architecture that should serve as the **source of truth for implementation**.
+
+---
+
+## PHASE 15 — INSTAGRAM ADAPTER DESIGN (V1.1)
+
+### User Review Required
+> [!IMPORTANT]  
+> Please review the Instagram extraction strategy below. Instagram is highly hostile to automated scraping, so this is a "best-effort" implementation with graceful degradation.
+
+### Goal
+Implement a `PlatformAdapter` for Instagram (`InstagramAdapter`) to extract public media (images, videos, reels, tv) using a multi-layered, fallback-based approach.
+
+### 1. DI & Network Wiring
+The `InstagramAdapter` will implement the standard `PlatformAdapter` interface and be registered in `PlatformModule`. It will inject the singleton `OkHttpClient`.
+
+### 2. Extraction Strategy (Multi-Layered)
+The extraction strategy follows the `platform-extraction` playbook. Given the hostility of Instagram's endpoints, we will attempt the following layers in order. We will use a realistic desktop User-Agent and strict timeouts (connect: 15s, read: 30s) on `Dispatchers.IO`.
+
+- **Layer 1: Static HTML Signals (Most Resilient, for Single Media)**
+  Fetch the post HTML. Scan for `<meta property="og:video">` (for videos) or `<meta property="og:image">` (for single photos). If `og:video` is present, it's a video/reel. This is lightweight and less prone to structure changes.
+- **Layer 2: Embedded JSON (For Carousels)**
+  If Layer 1 indicates multiple items or if we want better metadata, scan the HTML for embedded JSON like `window.__additionalDataLoaded` or `_sharedData`. Parse this with `kotlinx.serialization` or targeted regex to find carousel edges and media URLs. 
+- **Layer 3: GraphQL / Undocumented API (Volatile)**
+  As a last resort, append `?__a=1&__d=dis` to the URL. This returns JSON but is heavily rate-limited and often blocked with login walls.
+
+### 3. Carousel Handling in the Domain Model
+Based on the `platform-extraction` playbook, we will handle Carousels entirely within the existing `StreamInfo` domain model without modifying the core Room DB schema.
+- **extractMediaInfo**: Returns a single `MediaInfo` representing the overall post/carousel (using the first item's thumbnail).
+- **resolveStreams**: For a carousel, this will return a `List<StreamInfo>` where each entry represents a distinct item in the carousel, preserving the original order. We will set the `mimeType` appropriately (e.g., `image/jpeg` or `video/mp4`) and use the `quality` field to label the index (e.g., "Item 1", "Item 2").
+
+### 4. Graceful Degradation & Error Mapping
+The `healthCheck()` will return `AdapterStatus.DEGRADED` or `BROKEN` if anti-bot measures are detected (e.g., login walls or 429s).
+Errors will map to the existing `AppError` hierarchy:
+- `401 / 403 / Login Wall HTML` → `AppError.ContentRestricted`
+- `404` → `AppError.MediaNotFound`
+- `429` → `AppError.ExtractionFailed` (with retry backoff)
+- `Parsing errors` → `AppError.ExtractionFailed`
+
+### Open Questions
+> [!WARNING]  
+> Are you okay with using the `quality` field in `StreamInfo` to store the carousel index (e.g., "Item 1 of 3"), or would you prefer extending the domain model to officially support `carouselIndex` (which might touch other UI mapping logic)? Our current strategy avoids DB schema changes.

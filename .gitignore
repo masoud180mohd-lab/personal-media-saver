@@ -18,10 +18,23 @@ captures/
 .cxx
 *.apk
 *.aab
+# Keystore & Signing
 *.keystore
 *.jks
+keystore.properties
+signing.properties
+keystore/
+app/keystore/
 output.json
 
 # OS files
 Thumbs.db
 Desktop.ini
+
+# Build and scratch artifacts
+bin/
+*/bin/
+*/*/bin/
+*.tmp
+*.log
+logcat*.txt

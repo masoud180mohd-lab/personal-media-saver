@@ -5,6 +5,8 @@ import android.content.Context
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
+import com.mediasaver.core.common.FileNameSanitizer
+import com.mediasaver.core.common.SecurityUtils
 import com.mediasaver.core.model.PlatformId
 import com.mediasaver.core.model.error.AppError
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -27,7 +29,7 @@ class MediaStoreManager @Inject constructor(
      * Saves a completed video file into the public Movies/MediaSaver directory.
      *
      * @param sourceFile The local completed file (e.g. in cache)
-     * @param fileName The sanitized target file name
+     * @param fileName The target file name (will be sanitized)
      * @param platform The originating platform
      * @param mimeType Target MIME type (default: video/mp4)
      * @return [Result] containing the final MediaStore URI
@@ -39,6 +41,11 @@ class MediaStoreManager @Inject constructor(
         mimeType: String = "video/mp4"
     ): Result<Uri> = withContext(Dispatchers.IO) {
         runCatching {
+            val fileObj = File(fileName)
+            val safeExt = SecurityUtils.normalizeExtension(fileObj.extension, defaultExtension = "mp4")
+            val safeBaseName = FileNameSanitizer.sanitize(fileObj.nameWithoutExtension, fallback = "media")
+            val sanitizedFileName = "$safeBaseName.$safeExt"
+
             val platformFolder = when (platform) {
                 PlatformId.YOUTUBE -> "YouTube"
                 PlatformId.TIKTOK -> "TikTok"
@@ -49,7 +56,7 @@ class MediaStoreManager @Inject constructor(
             val relativePath = "Movies/MediaSaver/$platformFolder"
 
             val contentValues = ContentValues().apply {
-                put(MediaStore.Video.Media.DISPLAY_NAME, fileName)
+                put(MediaStore.Video.Media.DISPLAY_NAME, sanitizedFileName)
                 put(MediaStore.Video.Media.MIME_TYPE, mimeType)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     put(MediaStore.Video.Media.RELATIVE_PATH, relativePath)
@@ -98,6 +105,11 @@ class MediaStoreManager @Inject constructor(
         mimeType: String = "image/jpeg"
     ): Result<Uri> = withContext(Dispatchers.IO) {
         runCatching {
+            val fileObj = File(fileName)
+            val safeExt = SecurityUtils.normalizeExtension(fileObj.extension, defaultExtension = "jpg")
+            val safeBaseName = FileNameSanitizer.sanitize(fileObj.nameWithoutExtension, fallback = "media")
+            val sanitizedFileName = "$safeBaseName.$safeExt"
+
             val platformFolder = when (platform) {
                 PlatformId.WHATSAPP -> "WhatsApp"
                 PlatformId.INSTAGRAM -> "Instagram"
@@ -106,7 +118,7 @@ class MediaStoreManager @Inject constructor(
             val relativePath = "Pictures/MediaSaver/$platformFolder"
 
             val contentValues = ContentValues().apply {
-                put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+                put(MediaStore.Images.Media.DISPLAY_NAME, sanitizedFileName)
                 put(MediaStore.Images.Media.MIME_TYPE, mimeType)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     put(MediaStore.Images.Media.RELATIVE_PATH, relativePath)

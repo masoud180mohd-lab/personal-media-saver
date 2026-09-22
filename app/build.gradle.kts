@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -18,6 +20,38 @@ android {
         versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        
+        ndk {
+            abiFilters.add("arm64-v8a") // Restrict to arm64 to keep FFmpeg footprint minimal
+        }
+    }
+
+    val keystorePropertiesFile = rootProject.file("keystore.properties")
+    val keystoreProperties = Properties().apply {
+        if (keystorePropertiesFile.exists()) {
+            keystorePropertiesFile.inputStream().use { load(it) }
+        }
+    }
+
+    signingConfigs {
+        create("release") {
+            val ksPath = keystoreProperties.getProperty("storeFile")
+                ?: System.getenv("KEYSTORE_FILE")
+                ?: "keystore/release.jks"
+            val ksFile = rootProject.file(ksPath)
+            if (ksFile.exists()) {
+                storeFile = ksFile
+                storePassword = keystoreProperties.getProperty("storePassword")
+                    ?: System.getenv("KEYSTORE_PASSWORD")
+                    ?: ""
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                    ?: System.getenv("KEY_ALIAS")
+                    ?: ""
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+                    ?: System.getenv("KEY_PASSWORD")
+                    ?: ""
+            }
+        }
     }
 
     buildTypes {
@@ -28,7 +62,10 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("debug")
+            val releaseSigning = signingConfigs.getByName("release")
+            if (releaseSigning.storeFile != null && releaseSigning.storeFile!!.exists()) {
+                signingConfig = releaseSigning
+            }
         }
         debug {
             applicationIdSuffix = ".debug"
@@ -66,6 +103,7 @@ dependencies {
     implementation(project(":core:network"))
     implementation(project(":core:download"))
     implementation(project(":core:storage"))
+    implementation(project(":core:ui"))
 
     // Platform Modules
     implementation(project(":platform:youtube"))
@@ -102,10 +140,14 @@ dependencies {
 
     // Image Loading & Coroutines
     implementation(libs.coil.compose)
+    implementation(libs.coil.video)
     implementation(libs.kotlinx.coroutines.android)
 
     // Compose Tooling
     debugImplementation(libs.androidx.compose.ui.tooling)
+
+    // WorkManager
+    implementation(libs.androidx.work.runtime.ktx)
 
     // Testing
     testImplementation(libs.junit)

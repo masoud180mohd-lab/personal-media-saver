@@ -1,5 +1,6 @@
 package com.mediasaver.platform.youtube
 
+import android.util.Log
 import com.mediasaver.core.domain.platform.PlatformAdapter
 import com.mediasaver.core.model.AdapterStatus
 import com.mediasaver.core.model.MediaInfo
@@ -11,6 +12,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.ServiceList
+import org.schabi.newpipe.extractor.localization.ContentCountry
+import org.schabi.newpipe.extractor.localization.Localization
 import org.schabi.newpipe.extractor.exceptions.AgeRestrictedContentException
 import org.schabi.newpipe.extractor.exceptions.ContentNotAvailableException
 import org.schabi.newpipe.extractor.exceptions.ExtractionException
@@ -36,6 +39,10 @@ class YouTubeAdapter @Inject constructor(
     private val streamMapper: YouTubeStreamMapper
 ) : PlatformAdapter {
 
+    companion object {
+        private const val TAG = "YouTubeAdapter"
+    }
+
     override val platformId: PlatformId = PlatformId.YOUTUBE
     override val platformName: String = "YouTube"
 
@@ -45,8 +52,10 @@ class YouTubeAdapter @Inject constructor(
     @Synchronized
     private fun ensureInitialized() {
         if (!isInitialized) {
-            NewPipe.init(newPipeDownloader)
+            Log.d(TAG, "Initializing NewPipe Extractor...")
+            NewPipe.init(newPipeDownloader, Localization.DEFAULT, ContentCountry.DEFAULT)
             isInitialized = true
+            Log.d(TAG, "NewPipe Extractor initialized successfully")
         }
     }
 
@@ -59,9 +68,13 @@ class YouTubeAdapter @Inject constructor(
             ?: return@withContext Result.failure(AppError.InvalidUrl(url))
         val canonicalUrl = YouTubeUrlParser.buildCanonicalWatchUrl(videoId)
 
+        Log.d(TAG, "extractMediaInfo: videoId=$videoId, url=$canonicalUrl")
+
         try {
             ensureInitialized()
             val info = NewPipeStreamInfo.getInfo(ServiceList.YouTube, canonicalUrl)
+
+            Log.d(TAG, "extractMediaInfo success: title='${info.name}', duration=${info.duration}")
 
             val bestThumbnail = info.thumbnails?.maxByOrNull { it.width ?: 0 }?.url
                 ?: "https://img.youtube.com/vi/$videoId/hqdefault.jpg"
@@ -78,12 +91,15 @@ class YouTubeAdapter @Inject constructor(
                 )
             )
         } catch (e: Throwable) {
+            Log.e(TAG, "extractMediaInfo FAILED: ${e.javaClass.simpleName}: ${e.message}", e)
             Result.failure(mapError(e, url))
         }
     }
 
     override suspend fun resolveStreams(mediaId: String): Result<List<StreamInfo>> = withContext(Dispatchers.IO) {
         val canonicalUrl = YouTubeUrlParser.buildCanonicalWatchUrl(mediaId)
+
+        Log.d(TAG, "resolveStreams: mediaId=$mediaId")
 
         try {
             ensureInitialized()
@@ -94,6 +110,8 @@ class YouTubeAdapter @Inject constructor(
             val audio = info.audioStreams?.map { streamMapper.mapAudioStream(it) }.orEmpty()
 
             val allStreams = progressive + adaptiveVideo + audio
+            Log.d(TAG, "resolveStreams: found ${progressive.size} progressive, ${adaptiveVideo.size} adaptive video, ${audio.size} audio")
+
             if (allStreams.isEmpty()) {
                 return@withContext Result.failure(
                     AppError.ExtractionFailed(
@@ -105,6 +123,7 @@ class YouTubeAdapter @Inject constructor(
 
             Result.success(allStreams)
         } catch (e: Throwable) {
+            Log.e(TAG, "resolveStreams FAILED: ${e.javaClass.simpleName}: ${e.message}", e)
             Result.failure(mapError(e, canonicalUrl))
         }
     }

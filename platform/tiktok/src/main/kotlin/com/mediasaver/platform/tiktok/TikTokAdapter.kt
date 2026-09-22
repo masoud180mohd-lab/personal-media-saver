@@ -32,15 +32,25 @@ class TikTokAdapter @Inject constructor(
     }
 
     override suspend fun extractMediaInfo(url: String): Result<MediaInfo> = withContext(Dispatchers.IO) {
-        val resolvedUrl = TikTokUrlParser.resolveCanonicalUrl(url, okHttpClient)
-            ?: return@withContext Result.failure(AppError.InvalidUrl(url))
+        // Step 1: Attempt to resolve canonical URL and extract video ID
+        val resolvedUrl = TikTokUrlParser.resolveCanonicalUrl(url, okHttpClient) ?: url
+        val videoId = TikTokUrlParser.extractVideoId(resolvedUrl) ?: ""
 
-        val videoId = TikTokUrlParser.extractVideoId(resolvedUrl)
-            ?: return@withContext Result.failure(AppError.InvalidUrl(url))
+        val canonicalUrl = if (videoId.isNotBlank()) {
+            TikTokUrlParser.buildCanonicalWatchUrl(videoId)
+        } else {
+            resolvedUrl
+        }
 
-        val canonicalUrl = TikTokUrlParser.buildCanonicalWatchUrl(videoId)
+        // Step 2: Extract via TikWM or web scraping (supports short links and canonical URLs)
+        val extractionResult = tikTokExtractor.extract(canonicalUrl, videoId).let { res ->
+            if (res.isFailure && resolvedUrl != url) {
+                tikTokExtractor.extract(url, videoId)
+            } else {
+                res
+            }
+        }
 
-        val extractionResult = tikTokExtractor.extract(canonicalUrl, videoId)
         if (extractionResult.isFailure) {
             return@withContext Result.failure(
                 extractionResult.exceptionOrNull() ?: AppError.ExtractionFailed(PlatformId.TIKTOK)
@@ -48,7 +58,9 @@ class TikTokAdapter @Inject constructor(
         }
 
         val details = extractionResult.getOrThrow()
-        val displayTitle = details.title?.take(100) ?: "TikTok Video by @${details.author ?: "user"}"
+        val displayTitle = details.title?.take(100)
+            ?: details.author?.let { "TikTok Video by @$it" }
+            ?: "TikTok Video"
 
         Result.success(
             MediaInfo(
@@ -58,13 +70,17 @@ class TikTokAdapter @Inject constructor(
                 description = details.title,
                 thumbnailUrl = details.thumbnailUrl,
                 durationSeconds = details.durationSeconds,
-                sourceUrl = resolvedUrl
+                sourceUrl = if (videoId.isNotBlank()) TikTokUrlParser.buildCanonicalWatchUrl(videoId) else resolvedUrl
             )
         )
     }
 
     override suspend fun resolveStreams(mediaId: String): Result<List<StreamInfo>> = withContext(Dispatchers.IO) {
-        val canonicalUrl = TikTokUrlParser.buildCanonicalWatchUrl(mediaId)
+        val canonicalUrl = if (TikTokUrlParser.extractVideoId(mediaId) != null) {
+            TikTokUrlParser.buildCanonicalWatchUrl(mediaId)
+        } else {
+            mediaId
+        }
 
         val extractionResult = tikTokExtractor.extract(canonicalUrl, mediaId)
         if (extractionResult.isFailure) {
@@ -74,21 +90,59 @@ class TikTokAdapter @Inject constructor(
         }
 
         val details = extractionResult.getOrThrow()
-        val qualityLabel = if (details.isWatermarkFree) "HD (No Watermark)" else "HD"
+        val streams = mutableListOf<StreamInfo>()
 
-        val stream = StreamInfo(
-            url = details.videoUrl,
-            quality = qualityLabel,
-            format = "mp4",
-            mimeType = "video/mp4",
-            isVideoOnly = false,
-            isAudioOnly = false,
-            fileSize = null,
-            bitrate = null,
-            codec = "h264"
+        // 1. Watermark-Free Video Stream (or Primary Video)
+        val primaryLabel = if (details.isWatermarkFree) "HD (No Watermark)" else "HD"
+        streams.add(
+            StreamInfo(
+                url = details.videoUrl,
+                quality = primaryLabel,
+                format = "mp4",
+                mimeType = "video/mp4",
+                isVideoOnly = false,
+                isAudioOnly = false,
+                fileSize = null,
+                bitrate = null,
+                codec = "h264"
+            )
         )
 
-        Result.success(listOf(stream))
+        // 2. Watermarked fallback stream (if distinct)
+        if (!details.watermarkedVideoUrl.isNullOrBlank() && details.watermarkedVideoUrl != details.videoUrl) {
+            streams.add(
+                StreamInfo(
+                    url = details.watermarkedVideoUrl,
+                    quality = "SD (Watermarked)",
+                    format = "mp4",
+                    mimeType = "video/mp4",
+                    isVideoOnly = false,
+                    isAudioOnly = false,
+                    fileSize = null,
+                    bitrate = null,
+                    codec = "h264"
+                )
+            )
+        }
+
+        // 3. Audio stream (MP3)
+        if (!details.audioUrl.isNullOrBlank()) {
+            streams.add(
+                StreamInfo(
+                    url = details.audioUrl,
+                    quality = "Audio Only",
+                    format = "mp3",
+                    mimeType = "audio/mpeg",
+                    isVideoOnly = false,
+                    isAudioOnly = true,
+                    fileSize = null,
+                    bitrate = null,
+                    codec = "mp3"
+                )
+            )
+        }
+
+        Result.success(streams)
     }
 
     override suspend fun healthCheck(): AdapterStatus = withContext(Dispatchers.IO) {

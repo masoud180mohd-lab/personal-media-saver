@@ -11,7 +11,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class PlatformResolver @Inject constructor(
-    private val adapters: List<PlatformAdapter>
+    private val adapters: @JvmSuppressWildcards List<PlatformAdapter>
 ) {
 
     /**

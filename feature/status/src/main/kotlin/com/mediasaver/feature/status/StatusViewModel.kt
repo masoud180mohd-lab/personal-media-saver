@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mediasaver.core.domain.usecase.CheckStatusPermissionUseCase
 import com.mediasaver.core.domain.usecase.ObserveStatusesUseCase
+import com.mediasaver.core.domain.usecase.SaveStatusUriUseCase
 import com.mediasaver.core.domain.usecase.SaveStatusUseCase
 import com.mediasaver.core.domain.usecase.ScanStatusesUseCase
 import com.mediasaver.core.model.WhatsAppStatus
@@ -22,7 +23,8 @@ class StatusViewModel @Inject constructor(
     private val checkStatusPermissionUseCase: CheckStatusPermissionUseCase,
     private val scanStatusesUseCase: ScanStatusesUseCase,
     private val saveStatusUseCase: SaveStatusUseCase,
-    private val observeStatusesUseCase: ObserveStatusesUseCase
+    private val observeStatusesUseCase: ObserveStatusesUseCase,
+    private val saveStatusUriUseCase: SaveStatusUriUseCase
 ) : ViewModel() {
 
     private val _isPermissionGranted = MutableStateFlow(false)
@@ -37,10 +39,11 @@ class StatusViewModel @Inject constructor(
         _isPermissionGranted,
         _isScanning,
         _filter,
-        _isBusinessWhatsApp,
-        _savingStatusId,
-        _userMessage
-    ) { statuses, granted, scanning, filter, isBusiness, savingId, message ->
+        combine(_isBusinessWhatsApp, _savingStatusId, _userMessage) { isBusiness, savingId, message ->
+            Triple(isBusiness, savingId, message)
+        }
+    ) { statuses, granted, scanning, filter, extra ->
+        val (isBusiness, savingId, message) = extra
         StatusUiState(
             isPermissionGranted = granted,
             isScanning = scanning,
@@ -58,6 +61,13 @@ class StatusViewModel @Inject constructor(
 
     init {
         checkPermissionAndScan()
+    }
+
+    fun saveStatusUri(uriString: String) {
+        viewModelScope.launch {
+            saveStatusUriUseCase(uriString, _isBusinessWhatsApp.value)
+            checkPermissionAndScan()
+        }
     }
 
     fun checkPermissionAndScan() {

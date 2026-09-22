@@ -80,9 +80,62 @@ class UrlValidatorTest {
     }
 
     @Test
+    fun `rejects dangerous schemes such as content, intent, data, blob`() {
+        val contentResult = UrlValidator.validate("content://com.android.providers.media/external/video")
+        assertTrue(contentResult.isFailure)
+
+        val intentResult = UrlValidator.validate("intent://#Intent;action=android.intent.action.VIEW;end")
+        assertTrue(intentResult.isFailure)
+
+        val dataResult = UrlValidator.validate("data:text/html,<script>alert(1)</script>")
+        assertTrue(dataResult.isFailure)
+
+        val blobResult = UrlValidator.validate("blob:https://youtube.com/uuid")
+        assertTrue(blobResult.isFailure)
+    }
+
+    @Test
+    fun `rejects URLs with CRLF and control characters`() {
+        val crlfResult = UrlValidator.validate("https://youtube.com/watch?v=123\r\nHost: evil.com")
+        assertTrue(crlfResult.isFailure)
+
+        val nullByteResult = UrlValidator.validate("https://youtube.com/watch?v=123\u0000.mp4")
+        assertTrue(nullByteResult.isFailure)
+    }
+
+    @Test
+    fun `rejects directory traversal patterns in URL`() {
+        val traversalResult = UrlValidator.validate("https://example.com/videos/../../secret.mp4")
+        assertTrue(traversalResult.isFailure)
+    }
+
+    @Test
+    fun `rejects URLs with embedded credentials`() {
+        val credResult = UrlValidator.validate("https://user:password@example.com/media")
+        assertTrue(credResult.isFailure)
+    }
+
+    @Test
+    fun `rejects private and loopback IP hosts to prevent SSRF`() {
+        val localhostResult = UrlValidator.validate("http://localhost:8080/video.mp4")
+        assertTrue(localhostResult.isFailure)
+
+        val loopbackResult = UrlValidator.validate("http://127.0.0.1/video.mp4")
+        assertTrue(loopbackResult.isFailure)
+
+        val privateResult = UrlValidator.validate("http://192.168.1.1/video.mp4")
+        assertTrue(privateResult.isFailure)
+
+        val ipv6Loopback = UrlValidator.validate("http://[::1]:8080/video.mp4")
+        assertTrue(ipv6Loopback.isFailure)
+    }
+
+    @Test
     fun `isValid helper returns correct boolean`() {
         assertTrue(UrlValidator.isValid("https://tiktok.com/@user/video/123"))
         assertFalse(UrlValidator.isValid(""))
         assertFalse(UrlValidator.isValid("not a url"))
+        assertFalse(UrlValidator.isValid("javascript:alert(1)"))
+        assertFalse(UrlValidator.isValid("http://127.0.0.1/exploit"))
     }
 }

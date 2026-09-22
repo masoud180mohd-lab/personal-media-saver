@@ -81,4 +81,13 @@ class TikTokUrlParserTest {
     fun `buildCanonicalWatchUrl throws for non-numeric video ID`() {
         TikTokUrlParser.buildCanonicalWatchUrl("invalid_id")
     }
+
+    @Test
+    fun `resolveCanonicalUrl resolves real short link`() = kotlinx.coroutines.runBlocking {
+        val client = okhttp3.OkHttpClient()
+        val resolved = TikTokUrlParser.resolveCanonicalUrl("https://vm.tiktok.com/ZSqvw3hdh/", client)
+        val videoId = if (resolved != null) TikTokUrlParser.extractVideoId(resolved) else null
+        org.junit.Assert.assertNotNull("Resolved URL should not be null", resolved)
+        org.junit.Assert.assertNotNull("Extracted videoId should not be null", videoId)
+    }
 }

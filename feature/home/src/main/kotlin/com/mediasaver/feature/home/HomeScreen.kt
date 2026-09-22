@@ -7,12 +7,9 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,63 +19,51 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.ContentPaste
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.ErrorOutline
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import coil.compose.AsyncImage
-import coil.request.ImageRequest
 import com.mediasaver.core.model.MediaInfo
 import com.mediasaver.core.model.PlatformId
 import com.mediasaver.core.model.StreamInfo
+import com.mediasaver.core.ui.components.AppSnackbar
+import com.mediasaver.core.ui.components.ErrorState
+import com.mediasaver.core.ui.components.MediaPreviewCard
+import com.mediasaver.core.ui.components.QualityChipRow
+import com.mediasaver.core.ui.components.UrlInputCard
+import com.mediasaver.core.ui.theme.MediaSaverTheme
+import com.mediasaver.core.ui.util.rememberIsReduceMotionEnabled
 
 @Composable
 fun HomeScreen(
     modifier: Modifier = Modifier,
     initialSharedUrl: String? = null,
     onNavigateToDownloads: () -> Unit = {},
+    onNavigateToSettings: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -100,127 +85,252 @@ fun HomeScreen(
         }
     }
 
+    HomeScreenContent(
+        modifier = modifier,
+        uiState = uiState,
+        snackbarHostState = snackbarHostState,
+        onUrlChange = { viewModel.onUrlChange(it) },
+        onProcessUrl = {
+            keyboardController?.hide()
+            viewModel.processUrl()
+        },
+        onPaste = {
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            val clip = clipboard?.primaryClip
+            if (clip != null && clip.itemCount > 0) {
+                val text = clip.getItemAt(0).text?.toString().orEmpty()
+                if (text.isNotBlank()) {
+                    viewModel.onUrlChange(text)
+                }
+            }
+        },
+        onSelectStream = { viewModel.onSelectStream(it) },
+        onStartDownload = { stream ->
+            viewModel.startDownload(stream)
+            onNavigateToDownloads()
+        },
+        onStartBatchDownload = { streams ->
+            viewModel.startBatchDownload(streams)
+            onNavigateToDownloads()
+        },
+        onNavigateToSettings = onNavigateToSettings
+    )
+}
+
+@Composable
+fun HomeScreenContent(
+    modifier: Modifier = Modifier,
+    uiState: HomeUiState,
+    snackbarHostState: SnackbarHostState,
+    onUrlChange: (String) -> Unit,
+    onProcessUrl: () -> Unit,
+    onPaste: () -> Unit,
+    onSelectStream: (StreamInfo) -> Unit,
+    onStartDownload: (StreamInfo?) -> Unit,
+    onStartBatchDownload: (List<StreamInfo>) -> Unit,
+    onNavigateToSettings: () -> Unit = {}
+) {
+    val isReduceMotion = rememberIsReduceMotionEnabled()
+    val haptic = LocalHapticFeedback.current
+    
+    val isCarousel = uiState.availableStreams.size > 1 && uiState.availableStreams.all { it.quality?.startsWith("Slide ") == true }
+    var activeCarouselSlide by remember { androidx.compose.runtime.mutableStateOf<StreamInfo?>(null) }
+    
+    LaunchedEffect(uiState.availableStreams) {
+        if (isCarousel && uiState.availableStreams.isNotEmpty()) {
+            activeCarouselSlide = uiState.availableStreams.first()
+        }
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp),
+                .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Header Section
-            Column {
+            // Screen Title & Subtitle: "Clean Utility"
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    text = "Download Media",
+                    text = "Save Media",
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = "Paste links from YouTube, TikTok, Instagram or WhatsApp",
+                    text = "Download videos and audio with no ads or tracking",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
-            // URL Input Card
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
-                ),
-                shape = RoundedCornerShape(16.dp)
+            // UrlInputCard
+            UrlInputCard(
+                url = uiState.urlInput,
+                onUrlChange = onUrlChange,
+                detectedPlatform = uiState.detectedPlatform,
+                isLoading = uiState.isExtracting,
+                onPasteClick = onPaste,
+                onFetchClick = onProcessUrl,
+                onClearClick = { onUrlChange("") }
+            )
+
+            // Inline ErrorState (NOT full-width red banner)
+            AnimatedVisibility(
+                visible = uiState.errorMessage != null,
+                enter = if (isReduceMotion) fadeIn() else fadeIn() + expandVertically(),
+                exit = if (isReduceMotion) fadeOut() else fadeOut() + shrinkVertically()
             ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    OutlinedTextField(
-                        value = uiState.urlInput,
-                        onValueChange = { viewModel.onUrlChange(it) },
-                        modifier = Modifier.fillMaxWidth(),
-                        placeholder = { Text("https://...") },
-                        label = { Text("Media Link") },
-                        singleLine = false,
-                        maxLines = 3,
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Uri,
-                            imeAction = ImeAction.Done
-                        ),
-                        keyboardActions = KeyboardActions(
-                            onDone = {
-                                keyboardController?.hide()
-                                viewModel.processUrl()
-                            }
-                        ),
-                        trailingIcon = {
-                            if (uiState.urlInput.isNotEmpty()) {
-                                IconButton(onClick = { viewModel.onUrlChange("") }) {
-                                    Icon(Icons.Default.Clear, contentDescription = "Clear input")
+                uiState.errorMessage?.let { errorMsg ->
+                    val isAuthOrSettings = errorMsg.contains("Settings", ignoreCase = true) ||
+                        errorMsg.contains("Login", ignoreCase = true)
+
+                    ErrorState(
+                        message = errorMsg,
+                        onRetry = { onProcessUrl() },
+                        actionLabel = if (isAuthOrSettings) "Open Settings / Login" else null,
+                        onActionClick = if (isAuthOrSettings) onNavigateToSettings else null
+                    )
+                }
+            }
+
+            // Media Preview Card + Quality Chips + Pill Download Button
+            AnimatedVisibility(
+                visible = uiState.mediaInfo != null,
+                enter = if (isReduceMotion) fadeIn() else fadeIn() + expandVertically(),
+                exit = if (isReduceMotion) fadeOut() else fadeOut() + shrinkVertically()
+            ) {
+                uiState.mediaInfo?.let { media ->
+                    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                        MediaPreviewCard(
+                            mediaInfo = media,
+                            availableStreams = uiState.availableStreams,
+                            onActiveSlideChanged = { stream ->
+                                if (isCarousel) {
+                                    activeCarouselSlide = stream
                                 }
                             }
-                        },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outline
                         )
-                    )
 
-                    // Detected Platform Indicator & Actions
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        PlatformBadge(platform = uiState.detectedPlatform)
+                        if (uiState.availableStreams.isNotEmpty() && !isCarousel) {
+                            QualityChipRow(
+                                availableStreams = uiState.availableStreams,
+                                selectedStream = uiState.selectedStream,
+                                onSelectStream = onSelectStream
+                            )
+                        }
 
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(
-                                onClick = {
-                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                    val clip = clipboard?.primaryClip
-                                    if (clip != null && clip.itemCount > 0) {
-                                        val text = clip.getItemAt(0).text?.toString().orEmpty()
-                                        if (text.isNotBlank()) {
-                                            viewModel.onUrlChange(text)
-                                        }
-                                    }
-                                },
-                                shape = RoundedCornerShape(10.dp)
+                        if (isCarousel) {
+                            // Two buttons for carousel: Download Current Slide & Download All
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                Icon(
-                                    Icons.Default.ContentPaste,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Paste")
-                            }
+                                Button(
+                                    onClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        activeCarouselSlide?.let { onStartDownload(it) }
+                                    },
+                                    enabled = !uiState.isEnqueuing,
+                                    shape = CircleShape,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(52.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                        contentColor = MaterialTheme.colorScheme.onSurface,
+                                        disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                                    )
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Download,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "Save Slide",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
 
+                                Button(
+                                    onClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        onStartBatchDownload(uiState.availableStreams)
+                                    },
+                                    enabled = !uiState.isEnqueuing,
+                                    shape = CircleShape,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(52.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.primary,
+                                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                                        disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                                    )
+                                ) {
+                                    if (uiState.isEnqueuing) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(20.dp),
+                                            strokeWidth = 2.dp,
+                                            color = MaterialTheme.colorScheme.onPrimary
+                                        )
+                                    } else {
+                                        Text(
+                                            text = "Save All",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            // Large filled Download button (full width, pill)
                             Button(
                                 onClick = {
-                                    keyboardController?.hide()
-                                    viewModel.processUrl()
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    onStartDownload(null)
                                 },
-                                enabled = uiState.urlInput.isNotBlank() && !uiState.isExtracting,
-                                shape = RoundedCornerShape(10.dp)
+                                enabled = !uiState.isEnqueuing,
+                                shape = CircleShape,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(52.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary,
+                                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                                    disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                                )
                             ) {
-                                if (uiState.isExtracting) {
+                                if (uiState.isEnqueuing) {
                                     CircularProgressIndicator(
-                                        modifier = Modifier.size(18.dp),
+                                        modifier = Modifier.size(20.dp),
                                         strokeWidth = 2.dp,
                                         color = MaterialTheme.colorScheme.onPrimary
                                     )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Fetching...")
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "Queuing Download...",
+                                        style = MaterialTheme.typography.titleMedium
+                                    )
                                 } else {
                                     Icon(
-                                        Icons.Default.Search,
+                                        imageVector = Icons.Rounded.Download,
                                         contentDescription = null,
-                                        modifier = Modifier.size(18.dp)
+                                        modifier = Modifier.size(20.dp)
                                     )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Fetch")
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "Download",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
                                 }
                             }
                         }
@@ -228,249 +338,67 @@ fun HomeScreen(
                 }
             }
 
-            // Error Banner
-            AnimatedVisibility(
-                visible = uiState.errorMessage != null,
-                enter = fadeIn() + expandVertically(),
-                exit = fadeOut() + shrinkVertically()
-            ) {
-                uiState.errorMessage?.let { errorMsg ->
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.errorContainer
-                        ),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.ErrorOutline,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.error
-                            )
-                            Text(
-                                text = errorMsg,
-                                modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onErrorContainer
-                            )
-                            IconButton(
-                                onClick = { viewModel.processUrl() }
-                            ) {
-                                Icon(
-                                    Icons.Default.Refresh,
-                                    contentDescription = "Retry fetch",
-                                    tint = MaterialTheme.colorScheme.error
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Media Preview Card
-            AnimatedVisibility(
-                visible = uiState.mediaInfo != null,
-                enter = fadeIn() + expandVertically(),
-                exit = fadeOut() + shrinkVertically()
-            ) {
-                uiState.mediaInfo?.let { media ->
-                    MediaPreviewCard(
-                        mediaInfo = media,
-                        availableStreams = uiState.availableStreams,
-                        selectedStream = uiState.selectedStream,
-                        isEnqueuing = uiState.isEnqueuing,
-                        onSelectStream = { viewModel.onSelectStream(it) },
-                        onStartDownload = {
-                            viewModel.startDownload()
-                            onNavigateToDownloads()
-                        }
-                    )
-                }
-            }
+            Spacer(modifier = Modifier.height(32.dp))
         }
 
         SnackbarHost(
             hostState = snackbarHostState,
             modifier = Modifier.align(Alignment.BottomCenter)
-        )
-    }
-}
-
-@Composable
-fun PlatformBadge(platform: PlatformId, modifier: Modifier = Modifier) {
-    val (label, containerColor, contentColor) = when (platform) {
-        PlatformId.YOUTUBE -> Triple("YouTube", MaterialTheme.colorScheme.errorContainer, MaterialTheme.colorScheme.onErrorContainer)
-        PlatformId.TIKTOK -> Triple("TikTok", MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer)
-        PlatformId.INSTAGRAM -> Triple("Instagram", MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer)
-        PlatformId.WHATSAPP -> Triple("WhatsApp", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
-        PlatformId.UNKNOWN -> Triple("Link", MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(8.dp),
-        color = containerColor
-    ) {
-        Text(
-            text = label,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.SemiBold,
-            color = contentColor
-        )
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-fun MediaPreviewCard(
-    mediaInfo: MediaInfo,
-    availableStreams: List<StreamInfo>,
-    selectedStream: StreamInfo?,
-    isEnqueuing: Boolean,
-    onSelectStream: (StreamInfo) -> Unit,
-    onStartDownload: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            // Media Thumbnail with Duration Overlay
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(200.dp)
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-            ) {
-                AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current)
-                        .data(mediaInfo.thumbnailUrl)
-                        .crossfade(true)
-                        .build(),
-                    contentDescription = mediaInfo.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
-
-                mediaInfo.durationSeconds?.let { seconds ->
-                    if (seconds > 0) {
-                        Surface(
-                            shape = RoundedCornerShape(4.dp),
-                            color = MaterialTheme.colorScheme.scrim.copy(alpha = 0.75f),
-                            modifier = Modifier
-                                .align(Alignment.BottomEnd)
-                                .padding(8.dp)
-                        ) {
-                            Text(
-                                text = formatDuration(seconds),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.surface,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Info Content
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Text(
-                    text = mediaInfo.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-
-                // Quality / Stream Selection Options
-                if (availableStreams.isNotEmpty()) {
-                    Text(
-                        text = "Select Quality / Format",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        availableStreams.forEach { stream ->
-                            val isSelected = selectedStream?.url == stream.url
-                            val qualityLabel = buildString {
-                                append(stream.quality ?: "Standard")
-                                if (stream.format != null) append(" (${stream.format})")
-                                if (stream.isAudioOnly) append(" [Audio]")
-                            }
-
-                            FilterChip(
-                                selected = isSelected,
-                                onClick = { onSelectStream(stream) },
-                                label = { Text(qualityLabel) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
-                                )
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                // Download Action Button
-                Button(
-                    onClick = onStartDownload,
-                    enabled = !isEnqueuing,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary
-                    )
-                ) {
-                    if (isEnqueuing) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.onPrimary
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Queuing...")
-                    } else {
-                        Icon(Icons.Default.Download, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Download Now",
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-                }
-            }
+        ) { snackbarData ->
+            AppSnackbar(snackbarData = snackbarData)
         }
     }
 }
 
-private fun formatDuration(totalSeconds: Int): String {
-    val hours = totalSeconds / 3600
-    val minutes = (totalSeconds % 3600) / 60
-    val seconds = totalSeconds % 60
-    return if (hours > 0) {
-        String.format("%d:%02d:%02d", hours, minutes, seconds)
-    } else {
-        String.format("%02d:%02d", minutes, seconds)
+@Preview(name = "Home Screen - Dark", showBackground = true)
+@Composable
+private fun HomeScreenDarkPreview() {
+    MediaSaverTheme(darkTheme = true) {
+        HomeScreenContent(
+            uiState = HomeUiState(
+                urlInput = "https://youtube.com/watch?v=demo",
+                detectedPlatform = PlatformId.YOUTUBE,
+                mediaInfo = MediaInfo(
+                    id = "demo",
+                    platform = PlatformId.YOUTUBE,
+                    title = "Clean Utility Design in Modern Android Apps",
+                    thumbnailUrl = null,
+                    durationSeconds = 620,
+                    sourceUrl = "https://youtube.com/watch?v=demo"
+                ),
+                availableStreams = listOf(
+                    StreamInfo(url = "s1", quality = "1080p", format = "mp4", fileSize = 45_000_000L),
+                    StreamInfo(url = "s2", quality = "720p", format = "mp4", fileSize = 22_000_000L),
+                    StreamInfo(url = "s3", quality = "Audio", format = "m4a", isAudioOnly = true, fileSize = 4_000_000L)
+                )
+            ),
+            snackbarHostState = remember { SnackbarHostState() },
+            onUrlChange = {},
+            onProcessUrl = {},
+            onPaste = {},
+            onSelectStream = {},
+            onStartDownload = {},
+            onStartBatchDownload = {}
+        )
+    }
+}
+
+@Preview(name = "Home Screen - Light", showBackground = true)
+@Composable
+private fun HomeScreenLightPreview() {
+    MediaSaverTheme(darkTheme = false) {
+        HomeScreenContent(
+            uiState = HomeUiState(
+                urlInput = "",
+                detectedPlatform = PlatformId.UNKNOWN
+            ),
+            snackbarHostState = remember { SnackbarHostState() },
+            onUrlChange = {},
+            onProcessUrl = {},
+            onPaste = {},
+            onSelectStream = {},
+            onStartDownload = {},
+            onStartBatchDownload = {}
+        )
     }
 }

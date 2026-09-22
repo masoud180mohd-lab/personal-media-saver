@@ -99,10 +99,10 @@ class HomeViewModel @Inject constructor(
         _uiState.update { it.copy(selectedStream = stream) }
     }
 
-    fun startDownload() {
+    fun startDownload(streamToDownload: StreamInfo? = null) {
         val currentState = _uiState.value
         val media = currentState.mediaInfo ?: return
-        val stream = currentState.selectedStream ?: return
+        val stream = streamToDownload ?: currentState.selectedStream ?: return
 
         viewModelScope.launch {
             _uiState.update { it.copy(isEnqueuing = true, errorMessage = null) }
@@ -135,7 +135,7 @@ class HomeViewModel @Inject constructor(
                 _uiState.update {
                     it.copy(
                         isEnqueuing = false,
-                        downloadEnqueuedMessage = "Download queued: ${media.title.take(30)}..."
+                        downloadEnqueuedMessage = "Download queued: ${(media.title ?: "Media").take(30)}..."
                     )
                 }
             } catch (e: Exception) {
@@ -143,6 +143,55 @@ class HomeViewModel @Inject constructor(
                     it.copy(
                         isEnqueuing = false,
                         errorMessage = e.localizedMessage ?: "Failed to queue download."
+                    )
+                }
+            }
+        }
+    }
+
+    fun startBatchDownload(streams: List<StreamInfo>) {
+        val currentState = _uiState.value
+        val media = currentState.mediaInfo ?: return
+        if (streams.isEmpty()) return
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isEnqueuing = true, errorMessage = null) }
+
+            try {
+                streams.forEach { stream ->
+                    val taskId = UUID.randomUUID().toString()
+                    val task = DownloadTask(
+                        id = taskId,
+                        url = currentState.urlInput.trim(),
+                        platform = media.platform,
+                        mediaId = media.id,
+                        title = media.title,
+                        thumbnailUrl = media.thumbnailUrl,
+                        status = DownloadStatus.QUEUED,
+                        selectedQuality = stream.quality,
+                        selectedFormat = stream.format,
+                        totalBytes = stream.fileSize,
+                        durationSeconds = media.durationSeconds
+                    )
+
+                    val audioStream = if (stream.isVideoOnly) {
+                        currentState.availableStreams.firstOrNull { it.isAudioOnly }
+                    } else null
+
+                    enqueueDownloadUseCase(task, stream, audioStream)
+                }
+
+                _uiState.update {
+                    it.copy(
+                        isEnqueuing = false,
+                        downloadEnqueuedMessage = "Queued ${streams.size} items from ${(media.title ?: "Carousel").take(30)}..."
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isEnqueuing = false,
+                        errorMessage = e.localizedMessage ?: "Failed to queue batch download."
                     )
                 }
             }

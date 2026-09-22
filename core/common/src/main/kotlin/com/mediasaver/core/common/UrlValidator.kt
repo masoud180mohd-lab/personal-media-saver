@@ -50,28 +50,61 @@ object UrlValidator {
             )
         }
 
+        // Check for CRLF injection, null bytes, or dangerous control characters
+        if (trimmed.contains('\r') || trimmed.contains('\n') || trimmed.contains('\u0000')) {
+            return Result.failure(AppError.InvalidUrl(trimmed.take(64), "URL contains prohibited control characters."))
+        }
+
+        // Immediate check for dangerous schemes (e.g. javascript:, file:, content:, intent:)
+        val schemeSeparatorIndex = trimmed.indexOf(':')
+        if (schemeSeparatorIndex > 0) {
+            val potentialScheme = trimmed.substring(0, schemeSeparatorIndex).trim().lowercase()
+            if (SecurityUtils.isDangerousScheme(potentialScheme)) {
+                return Result.failure(
+                    AppError.InvalidUrl(trimmed.take(64), "Scheme '$potentialScheme:' is strictly prohibited.")
+                )
+            }
+        }
+
+        // Check for obvious path traversal injection sequences in URL
+        if (trimmed.contains("/../") || trimmed.contains("\\..\\") || trimmed.contains("/..\\") || trimmed.contains("\\../")) {
+            return Result.failure(AppError.InvalidUrl(trimmed.take(64), "URL contains invalid directory traversal patterns."))
+        }
+
         val uri = runCatching { URI(trimmed) }.getOrNull()
-            ?: return Result.failure(AppError.InvalidUrl(trimmed, "Malformed URL format."))
+            ?: return Result.failure(AppError.InvalidUrl(trimmed.take(64), "Malformed URL format."))
 
         val scheme = uri.scheme?.lowercase()
         if (scheme == null || (scheme != "http" && scheme != "https")) {
             return Result.failure(
-                AppError.InvalidUrl(trimmed, "Only HTTP and HTTPS schemes are supported.")
+                AppError.InvalidUrl(trimmed.take(64), "Only HTTP and HTTPS schemes are supported.")
             )
         }
 
         if (enforceHttps && scheme != "https") {
             return Result.failure(
-                AppError.InvalidUrl(trimmed, "Insecure HTTP connections are disallowed under current security policy.")
+                AppError.InvalidUrl(trimmed.take(64), "Insecure HTTP connections are disallowed under current security policy.")
             )
         }
 
         val host = uri.host
         if (host.isNullOrBlank()) {
-            return Result.failure(AppError.InvalidUrl(trimmed, "URL must contain a valid domain host."))
+            return Result.failure(AppError.InvalidUrl(trimmed.take(64), "URL must contain a valid domain host."))
         }
 
-        // Upgrade http to https recommendation: if http, upgrade to https for known media platforms
+        // Prevent embedded credentials (userinfo injection)
+        if (!uri.rawUserInfo.isNullOrBlank()) {
+            return Result.failure(AppError.InvalidUrl(trimmed.take(64), "Credentials in URL are strictly prohibited."))
+        }
+
+        // SSRF protection: block local/private IP addresses and localhost
+        if (SecurityUtils.isLocalOrPrivateIp(host)) {
+            return Result.failure(
+                AppError.InvalidUrl(trimmed.take(64), "Access to private or local network hosts is blocked for security.")
+            )
+        }
+
+        // Upgrade http to https recommendation: if http, upgrade to https
         val normalizedUrl = if (scheme == "http") {
             "https://" + trimmed.removePrefix("http://")
         } else {

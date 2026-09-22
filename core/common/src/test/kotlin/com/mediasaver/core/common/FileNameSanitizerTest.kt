@@ -69,4 +69,48 @@ class FileNameSanitizerTest {
         )
         assertEquals("WhatsApp_Sample.mp4", fileNameBlankExt)
     }
+
+    @Test
+    fun `neutralizes path traversal attempts in filename`() {
+        val traversalTitle = "../../../../../etc/passwd"
+        val sanitized = FileNameSanitizer.sanitize(traversalTitle)
+
+        assertFalse(sanitized.contains(".."))
+        assertFalse(sanitized.contains("/"))
+        assertFalse(sanitized.contains("\\"))
+    }
+
+    @Test
+    fun `replaces Windows reserved names with fallback`() {
+        assertEquals("media", FileNameSanitizer.sanitize("CON"))
+        assertEquals("media", FileNameSanitizer.sanitize("prn"))
+        assertEquals("media", FileNameSanitizer.sanitize("aux"))
+        assertEquals("media", FileNameSanitizer.sanitize("NUL"))
+        assertEquals("media", FileNameSanitizer.sanitize("com1"))
+        assertEquals("media", FileNameSanitizer.sanitize("LPT1"))
+    }
+
+    @Test
+    fun `rejects dangerous extensions and defaults to mp4`() {
+        val maliciousExe = FileNameSanitizer.buildFileName(
+            title = "Innocent",
+            platform = PlatformId.YOUTUBE,
+            extension = "exe"
+        )
+        assertEquals("YouTube_Innocent.mp4", maliciousExe)
+
+        val maliciousSh = FileNameSanitizer.buildFileName(
+            title = "Innocent",
+            platform = PlatformId.YOUTUBE,
+            extension = ".sh"
+        )
+        assertEquals("YouTube_Innocent.mp4", maliciousSh)
+
+        val maliciousApk = FileNameSanitizer.buildFileName(
+            title = "Innocent",
+            platform = PlatformId.YOUTUBE,
+            extension = "apk"
+        )
+        assertEquals("YouTube_Innocent.mp4", maliciousApk)
+    }
 }

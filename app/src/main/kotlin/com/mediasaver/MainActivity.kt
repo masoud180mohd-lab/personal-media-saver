@@ -15,8 +15,9 @@ import androidx.compose.ui.Modifier
 import com.mediasaver.core.domain.usecase.GetActiveDownloadsUseCase
 import com.mediasaver.core.domain.usecase.GetSettingsUseCase
 import com.mediasaver.core.model.ThemeMode
+import com.mediasaver.platform.instagram.InstagramSessionManager
 import com.mediasaver.ui.MediaSaverApp
-import com.mediasaver.ui.theme.MediaSaverTheme
+import com.mediasaver.core.ui.theme.MediaSaverTheme
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
@@ -32,6 +33,9 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var getActiveDownloadsUseCase: GetActiveDownloadsUseCase
 
+    @Inject
+    lateinit var instagramSessionManager: InstagramSessionManager
+
     private val sharedUrlState = mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -42,21 +46,23 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val settings by getSettingsUseCase().collectAsState(initial = null)
-            val isSystemDark = isSystemInDarkTheme()
-
             val isDark = when (settings?.themeMode) {
-                ThemeMode.DARK -> true
                 ThemeMode.LIGHT -> false
-                else -> isSystemDark
+                ThemeMode.DARK -> true
+                else -> true // Dark-first default for clean utility aesthetic
             }
 
-            MediaSaverTheme(darkTheme = isDark) {
+            MediaSaverTheme(
+                darkTheme = isDark,
+                dynamicColor = false
+            ) {
                 Surface(
                     modifier = Modifier.fillMaxSize()
                 ) {
                     MediaSaverApp(
                         sharedUrl = sharedUrlState.value,
-                        getActiveDownloadsUseCase = getActiveDownloadsUseCase
+                        getActiveDownloadsUseCase = getActiveDownloadsUseCase,
+                        instagramSessionManager = instagramSessionManager
                     )
                 }
             }
@@ -73,10 +79,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun extractSharedUrl(intent: Intent?): String? {
-        if (intent?.action == Intent.ACTION_SEND && intent.type == "text/plain") {
-            return intent.getStringExtra(Intent.EXTRA_TEXT)
-        }
-        return null
+        return intent?.getStringExtra("SHARED_URL")
     }
 }
 

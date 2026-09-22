@@ -13,6 +13,11 @@ object FileNameSanitizer {
 
     private val RESERVED_CHARS_REGEX = Regex("[\\\\/:*?\"<>|\\x00-\\x1F\\x7F]")
     private val MULTI_SPACE_REGEX = Regex("\\s+")
+    private val WINDOWS_RESERVED_NAMES = setOf(
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+    )
 
     /**
      * Sanitizes a raw title into a safe filesystem string.
@@ -25,13 +30,15 @@ object FileNameSanitizer {
         if (rawTitle.isNullOrBlank()) return fallback
 
         var cleaned = rawTitle
+            // Strip directory traversal patterns
+            .replace("..", "_")
             .replace(RESERVED_CHARS_REGEX, "_")
             .replace(MULTI_SPACE_REGEX, " ")
             .trim()
             .trimStart('.', '_', '-')
             .trimEnd('.', '_', '-')
 
-        if (cleaned.isBlank()) {
+        if (cleaned.isBlank() || WINDOWS_RESERVED_NAMES.contains(cleaned.uppercase())) {
             cleaned = fallback
         }
 
@@ -44,6 +51,7 @@ object FileNameSanitizer {
 
     /**
      * Constructs a complete, organized filename including platform metadata and sanitized extension.
+     * Only whitelisted extensions (.mp4, .webm, .jpg, .jpeg, .png, .webp) are allowed.
      *
      * @param title The media title
      * @param platform The originating platform
@@ -57,7 +65,7 @@ object FileNameSanitizer {
         extension: String,
         id: String? = null
     ): String {
-        val safeExt = extension.trimStart('.').lowercase().ifBlank { "mp4" }
+        val safeExt = SecurityUtils.normalizeExtension(extension, defaultExtension = "mp4")
         val platformPrefix = when (platform) {
             PlatformId.YOUTUBE -> "YouTube"
             PlatformId.TIKTOK -> "TikTok"

@@ -3,7 +3,7 @@ package com.mediasaver.feature.history
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,47 +17,55 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.DeleteSweep
-import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.OpenInNew
-import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.rounded.Clear
+import androidx.compose.material.icons.rounded.DeleteSweep
+import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.hilt.navigation.compose.hiltViewModel
-import coil.compose.AsyncImage
-import coil.request.ImageRequest
 import com.mediasaver.core.model.DownloadTask
 import com.mediasaver.core.model.PlatformId
+import com.mediasaver.core.ui.components.AppSnackbar
+import com.mediasaver.core.ui.components.EmptyState
+import com.mediasaver.core.ui.components.HistoryRow
+import com.mediasaver.core.ui.theme.CardShape
+import com.mediasaver.core.ui.theme.ChipShape
+import com.mediasaver.core.ui.theme.MediaSaverTheme
 import java.io.File
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -77,13 +85,69 @@ fun HistoryScreen(
         }
     }
 
+    HistoryScreenContent(
+        modifier = modifier,
+        uiState = uiState,
+        snackbarHostState = snackbarHostState,
+        onClearAll = { viewModel.showClearAllDialog(true) },
+        onOpenMedia = { openMedia(context, it) },
+        onShareMedia = { shareMedia(context, it) },
+        onDeleteMedia = { viewModel.requestDeleteItem(it) },
+        onConfirmDelete = { viewModel.confirmDeleteItem() },
+        onCancelDelete = { viewModel.requestDeleteItem(null) },
+        onConfirmClearAll = { viewModel.confirmClearAll() },
+        onCancelClearAll = { viewModel.showClearAllDialog(false) }
+    )
+}
+
+@Composable
+fun HistoryScreenContent(
+    modifier: Modifier = Modifier,
+    uiState: HistoryUiState,
+    snackbarHostState: SnackbarHostState,
+    onClearAll: () -> Unit,
+    onOpenMedia: (DownloadTask) -> Unit,
+    onShareMedia: (DownloadTask) -> Unit,
+    onDeleteMedia: (DownloadTask) -> Unit,
+    onConfirmDelete: () -> Unit,
+    onCancelDelete: () -> Unit,
+    onConfirmClearAll: () -> Unit,
+    onCancelClearAll: () -> Unit
+) {
+    var searchQuery by remember { mutableStateOf("") }
+    var selectedPlatform by remember { mutableStateOf<PlatformId?>(null) }
+
+    val haptic = LocalHapticFeedback.current
+
+    // Filter items according to search query and platform selection
+    val filteredItems = remember(uiState.completedItems, searchQuery, selectedPlatform) {
+        uiState.completedItems.filter { item ->
+            val matchesPlatform = selectedPlatform == null || item.platform == selectedPlatform
+            val matchesSearch = searchQuery.isBlank() ||
+                (item.title?.contains(searchQuery, ignoreCase = true) == true) ||
+                (item.url.contains(searchQuery, ignoreCase = true))
+            matchesPlatform && matchesSearch
+        }
+    }
+
+    // Group items by day (Today, Yesterday, Date)
+    val groupedItems = remember(filteredItems) {
+        val groups = linkedMapOf<String, MutableList<DownloadTask>>()
+        filteredItems.forEach { task ->
+            val timestamp = task.completedAt ?: task.createdAt
+            val dayHeader = getDayHeader(timestamp)
+            groups.getOrPut(dayHeader) { mutableListOf() }.add(task)
+        }
+        groups
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .padding(horizontal = 16.dp, vertical = 16.dp)
         ) {
-            // Screen Header
+            // Screen Header: Title + Clear All button
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -91,23 +155,24 @@ fun HistoryScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Column {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        text = "Download History",
+                        text = "History",
                         style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = "Saved media stored on this device",
+                        text = "Saved media stored locally on your device",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
 
                 if (uiState.completedItems.isNotEmpty()) {
-                    IconButton(onClick = { viewModel.showClearAllDialog(true) }) {
+                    IconButton(onClick = onClearAll) {
                         Icon(
-                            Icons.Default.DeleteSweep,
+                            imageVector = Icons.Rounded.DeleteSweep,
                             contentDescription = "Clear all history",
                             tint = MaterialTheme.colorScheme.error
                         )
@@ -120,25 +185,147 @@ fun HistoryScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    CircularProgressIndicator()
+                    CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                 }
             } else if (uiState.completedItems.isEmpty()) {
-                EmptyHistoryView(modifier = Modifier.fillMaxSize())
+                EmptyState(
+                    icon = Icons.Rounded.History,
+                    title = "No Download History",
+                    description = "Media you finish downloading will be archived here for offline playback and sharing.",
+                    modifier = Modifier.fillMaxSize()
+                )
             } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    items(
-                        items = uiState.completedItems,
-                        key = { it.id }
-                    ) { item ->
-                        HistoryItemCard(
-                            task = item,
-                            onOpen = { openMedia(context, item) },
-                            onShare = { shareMedia(context, item) },
-                            onDelete = { viewModel.requestDeleteItem(item) }
+                // Search field
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = {
+                        Text(
+                            text = "Search saved media...",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Rounded.Search,
+                            contentDescription = "Search",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Clear,
+                                    contentDescription = "Clear search",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    shape = CircleShape,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+                    )
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Horizontal platform FilterChips: All, YouTube, TikTok, WhatsApp, Instagram
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val platforms = listOf(
+                        null to "All",
+                        PlatformId.YOUTUBE to "YouTube",
+                        PlatformId.TIKTOK to "TikTok",
+                        PlatformId.WHATSAPP to "WhatsApp",
+                        PlatformId.INSTAGRAM to "Instagram"
+                    )
+
+                    platforms.forEach { (platform, label) ->
+                        val isSelected = selectedPlatform == platform
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = { selectedPlatform = if (isSelected) null else platform },
+                            label = {
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                )
+                            },
+                            shape = ChipShape,
+                            colors = FilterChipDefaults.filterChipColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                                labelColor = MaterialTheme.colorScheme.onSurface,
+                                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                enabled = true,
+                                selected = isSelected,
+                                borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                                selectedBorderColor = MaterialTheme.colorScheme.primary
+                            )
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // List of HistoryRow grouped by day headers
+                if (filteredItems.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "No matching items found",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        groupedItems.forEach { (dayHeader, itemsInDay) ->
+                            item(key = "header_$dayHeader") {
+                                Text(
+                                    text = dayHeader,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(top = 10.dp, bottom = 4.dp, start = 4.dp)
+                                )
+                            }
+
+                            items(
+                                items = itemsInDay,
+                                key = { it.id }
+                            ) { item ->
+                                HistoryRow(
+                                    task = item,
+                                    onOpen = { onOpenMedia(item) },
+                                    onShare = { onShareMedia(item) },
+                                    onDelete = { onDeleteMedia(item) }
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -147,24 +334,40 @@ fun HistoryScreen(
         SnackbarHost(
             hostState = snackbarHostState,
             modifier = Modifier.align(Alignment.BottomCenter)
-        )
+        ) { snackbarData ->
+            AppSnackbar(snackbarData = snackbarData)
+        }
     }
 
     // Confirm Single Delete Dialog
     uiState.itemPendingDelete?.let { pendingItem ->
         AlertDialog(
-            onDismissRequest = { viewModel.requestDeleteItem(null) },
-            title = { Text("Delete from history?") },
-            text = { Text("Remove '${pendingItem.title ?: "this item"}' from download history?") },
+            onDismissRequest = onCancelDelete,
+            shape = CardShape,
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+            title = {
+                Text(
+                    text = "Delete from history?",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = "Remove '${pendingItem.title ?: "this item"}' from your download history? (File remains in your gallery).",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
             confirmButton = {
-                TextButton(
-                    onClick = { viewModel.confirmDeleteItem() }
-                ) {
-                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                TextButton(onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onConfirmDelete()
+                }) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { viewModel.requestDeleteItem(null) }) {
+                TextButton(onClick = onCancelDelete) {
                     Text("Cancel")
                 }
             }
@@ -174,18 +377,32 @@ fun HistoryScreen(
     // Confirm Clear All Dialog
     if (uiState.showClearAllDialog) {
         AlertDialog(
-            onDismissRequest = { viewModel.showClearAllDialog(false) },
-            title = { Text("Clear all history?") },
-            text = { Text("This will clear all completed download records from the list.") },
+            onDismissRequest = onCancelClearAll,
+            shape = CardShape,
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+            title = {
+                Text(
+                    text = "Clear all history?",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = "This will remove all completed download logs from the app. Downloaded media files in your storage will not be deleted.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
             confirmButton = {
-                TextButton(
-                    onClick = { viewModel.confirmClearAll() }
-                ) {
-                    Text("Clear All", color = MaterialTheme.colorScheme.error)
+                TextButton(onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onConfirmClearAll()
+                }) {
+                    Text("Clear All", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { viewModel.showClearAllDialog(false) }) {
+                TextButton(onClick = onCancelClearAll) {
                     Text("Cancel")
                 }
             }
@@ -193,168 +410,25 @@ fun HistoryScreen(
     }
 }
 
-@Composable
-fun HistoryItemCard(
-    task: DownloadTask,
-    onOpen: () -> Unit,
-    onShare: () -> Unit,
-    onDelete: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-        )
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            // Thumbnail
-            Box(
-                modifier = Modifier
-                    .size(68.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-            ) {
-                val imageModel = task.filePath?.let { File(it) } ?: task.thumbnailUrl
-                AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current)
-                        .data(imageModel)
-                        .crossfade(true)
-                        .build(),
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
+private fun getDayHeader(timestamp: Long): String {
+    if (timestamp <= 0L) return "Earlier"
 
-            // Info Column
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                Text(
-                    text = task.title ?: "Media File",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+    val now = Calendar.getInstance()
+    val target = Calendar.getInstance().apply { timeInMillis = timestamp }
 
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    HistoryPlatformBadge(platform = task.platform)
+    val isToday = now.get(Calendar.YEAR) == target.get(Calendar.YEAR) &&
+        now.get(Calendar.DAY_OF_YEAR) == target.get(Calendar.DAY_OF_YEAR)
 
-                    val dateText = formatDate(task.completedAt ?: task.updatedAt)
-                    Text(
-                        text = dateText,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+    if (isToday) return "Today"
 
-                val size = task.totalBytes ?: task.downloadedBytes
-                if (size > 0) {
-                    Text(
-                        text = formatBytes(size),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.outline
-                    )
-                }
-            }
+    val yesterday = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }
+    val isYesterday = yesterday.get(Calendar.YEAR) == target.get(Calendar.YEAR) &&
+        yesterday.get(Calendar.DAY_OF_YEAR) == target.get(Calendar.DAY_OF_YEAR)
 
-            // Action Buttons
-            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                IconButton(onClick = onOpen) {
-                    Icon(
-                        Icons.Default.OpenInNew,
-                        contentDescription = "Open media",
-                        modifier = Modifier.size(20.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                }
+    if (isYesterday) return "Yesterday"
 
-                IconButton(onClick = onShare) {
-                    Icon(
-                        Icons.Default.Share,
-                        contentDescription = "Share media",
-                        modifier = Modifier.size(20.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                IconButton(onClick = onDelete) {
-                    Icon(
-                        Icons.Default.Delete,
-                        contentDescription = "Delete item",
-                        modifier = Modifier.size(20.dp),
-                        tint = MaterialTheme.colorScheme.error
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun HistoryPlatformBadge(platform: PlatformId, modifier: Modifier = Modifier) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(4.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant
-    ) {
-        Text(
-            text = platform.name.lowercase().replaceFirstChar { it.uppercase() },
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-}
-
-@Composable
-fun EmptyHistoryView(modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier.padding(32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Surface(
-            shape = CircleShape,
-            color = MaterialTheme.colorScheme.surfaceVariant,
-            modifier = Modifier.size(72.dp)
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    Icons.Default.History,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(36.dp)
-                )
-            }
-        }
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(
-            text = "No Download History",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold
-        )
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(
-            text = "Completed media downloads will appear here so you can view, share, or manage them.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-        )
-    }
+    val sdf = SimpleDateFormat("MMM d, yyyy", Locale.getDefault())
+    return sdf.format(Date(timestamp))
 }
 
 private fun openMedia(context: Context, task: DownloadTask) {
@@ -403,17 +477,63 @@ private fun shareMedia(context: Context, task: DownloadTask) {
     } catch (_: Exception) {}
 }
 
-private fun formatDate(timestamp: Long): String {
-    if (timestamp <= 0) return ""
-    val formatter = SimpleDateFormat("MMM d, yyyy", Locale.getDefault())
-    return formatter.format(Date(timestamp))
+@Preview(name = "History Screen - Dark", showBackground = true)
+@Composable
+private fun HistoryScreenDarkPreview() {
+    MediaSaverTheme(darkTheme = true) {
+        HistoryScreenContent(
+            uiState = HistoryUiState(
+                completedItems = listOf(
+                    DownloadTask(
+                        id = "1",
+                        url = "https://youtube.com/watch?v=1",
+                        platform = PlatformId.YOUTUBE,
+                        mediaId = "1",
+                        title = "Preview of Saved YouTube Video",
+                        downloadedBytes = 14_500_000L,
+                        totalBytes = 14_500_000L,
+                        completedAt = System.currentTimeMillis()
+                    ),
+                    DownloadTask(
+                        id = "2",
+                        url = "https://tiktok.com/@user/1",
+                        platform = PlatformId.TIKTOK,
+                        mediaId = "2",
+                        title = "TikTok Comedy Skit",
+                        downloadedBytes = 5_200_000L,
+                        totalBytes = 5_200_000L,
+                        completedAt = System.currentTimeMillis() - 86400000L
+                    )
+                )
+            ),
+            snackbarHostState = remember { SnackbarHostState() },
+            onClearAll = {},
+            onOpenMedia = {},
+            onShareMedia = {},
+            onDeleteMedia = {},
+            onConfirmDelete = {},
+            onCancelDelete = {},
+            onConfirmClearAll = {},
+            onCancelClearAll = {}
+        )
+    }
 }
 
-private fun formatBytes(bytes: Long): String {
-    if (bytes <= 0) return "0 B"
-    val units = arrayOf("B", "KB", "MB", "GB", "TB")
-    val digitGroups = (Math.log10(bytes.toDouble()) / Math.log10(1024.0)).toInt()
-    val group = digitGroups.coerceIn(0, units.size - 1)
-    val value = bytes / Math.pow(1024.0, group.toDouble())
-    return String.format("%.1f %s", value, units[group])
+@Preview(name = "History Screen - Light", showBackground = true)
+@Composable
+private fun HistoryScreenLightPreview() {
+    MediaSaverTheme(darkTheme = false) {
+        HistoryScreenContent(
+            uiState = HistoryUiState(completedItems = emptyList()),
+            snackbarHostState = remember { SnackbarHostState() },
+            onClearAll = {},
+            onOpenMedia = {},
+            onShareMedia = {},
+            onDeleteMedia = {},
+            onConfirmDelete = {},
+            onCancelDelete = {},
+            onConfirmClearAll = {},
+            onCancelClearAll = {}
+        )
+    }
 }

@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Subtle soft glow under arrow -->
+    <path
+        android:pathData="M54,49 m-26,0 a26,26 0 1,0 52,0 a26,26 0 1,0 -52,0"
+        android:fillColor="#154FD8C6" />
+
+    <!-- Film / Media Accent Dots -->
+    <path
+        android:pathData="M38,36 m-2.5,0 a2.5,2.5 0 1,0 5,0 a2.5,2.5 0 1,0 -5,0"
+        android:fillColor="#804FD8C6" />
+    <path
+        android:pathData="M70,36 m-2.5,0 a2.5,2.5 0 1,0 5,0 a2.5,2.5 0 1,0 -5,0"
+        android:fillColor="#804FD8C6" />
+
+    <!-- Main Download Arrow with Even-Odd Play Button Cutout -->
+    <path
+        android:fillType="evenOdd"
+        android:pathData="M52,30 C50.9,30 50,30.9 50,32 L50,47 L39,47 C37.2,47 36.3,49.1 37.5,50.4 L52.8,65.7 C53.5,66.4 54.5,66.4 55.2,65.7 L70.5,50.4 C71.7,49.1 70.8,47 69,47 L58,47 L58,32 C58,30.9 57.1,30 56,30 Z M50,44.5 C50,43.2 51.5,42.4 52.6,43.1 L58.5,46.6 C59.5,47.2 59.5,48.8 58.5,49.4 L52.6,52.9 C51.5,53.6 50,52.8 50,51.5 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="54"
+                android:startY="30"
+                android:endX="54"
+                android:endY="66"
+                android:type="linear">
+                <item android:color="#5FF2DE" android:offset="0.0" />
+                <item android:color="#4FD8C6" android:offset="0.5" />
+                <item android:color="#00A896" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Storage Cradle / Tray -->
+    <path
+        android:pathData="M37,67 L37,71 C37,74.3 39.7,77 43,77 L65,77 C68.3,77 71,74.3 71,71 L71,67"
+        android:strokeWidth="4"
+        android:strokeColor="#4FD8C6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+</vector>

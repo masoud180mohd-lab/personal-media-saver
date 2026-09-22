@@ -27,20 +27,12 @@ object PlatformModule {
         tikTokAdapter: TikTokAdapter,
         whatsAppAdapter: WhatsAppAdapter,
         instagramAdapter: InstagramAdapter
-    ): List<PlatformAdapter> {
+    ): @JvmSuppressWildcards List<PlatformAdapter> {
         return listOf(
             youTubeAdapter,
             tikTokAdapter,
             whatsAppAdapter,
             instagramAdapter
         )
-    }
-
-    @Provides
-    @Singleton
-    fun providePlatformResolver(
-        adapters: List<PlatformAdapter>
-    ): PlatformResolver {
-        return PlatformResolver(adapters)
     }
 }
