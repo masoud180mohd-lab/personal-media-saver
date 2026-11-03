@@ -183,14 +183,13 @@ fun HomeScreenContent(
                 exit = if (isReduceMotion) fadeOut() else fadeOut() + shrinkVertically()
             ) {
                 uiState.errorMessage?.let { errorMsg ->
-                    val isAuthOrSettings = errorMsg.contains("Settings", ignoreCase = true) ||
-                        errorMsg.contains("Login", ignoreCase = true)
+                    val isSettingsError = errorMsg.contains("Settings", ignoreCase = true)
 
                     ErrorState(
                         message = errorMsg,
                         onRetry = { onProcessUrl() },
-                        actionLabel = if (isAuthOrSettings) "Open Settings / Login" else null,
-                        onActionClick = if (isAuthOrSettings) onNavigateToSettings else null
+                        actionLabel = if (isSettingsError) "Open Settings" else null,
+                        onActionClick = if (isSettingsError) onNavigateToSettings else null
                     )
                 }
             }

@@ -14,6 +14,7 @@ import coil.ImageLoaderFactory
 import coil.decode.VideoFrameDecoder
 import com.mediasaver.core.common.AppLogger
 import com.mediasaver.core.download.work.StartupCleanupWorker
+import com.mediasaver.privacy.InstagramPrivacyCleanup
 import dagger.hilt.android.HiltAndroidApp
 
 /**
@@ -40,6 +41,7 @@ class MediaSaverApplication : Application(), ImageLoaderFactory {
             }
         }
 
+        InstagramPrivacyCleanup.clearLegacyData(this)
         createNotificationChannel()
         scheduleStartupCleanup()
     }

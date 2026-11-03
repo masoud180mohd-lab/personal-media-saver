@@ -1,17 +1,40 @@
 package com.mediasaver.platform.instagram
 
 import okhttp3.OkHttpClient
+import com.mediasaver.core.model.error.AppError
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
-
-import io.mockk.mockk
 
 class InstagramExtractorTest {
 
-    private val extractor = InstagramExtractor(
-        OkHttpClient(),
-        mockk(relaxed = true)
-    )
+    private val extractor = InstagramExtractor(OkHttpClient())
+
+    @Test
+    fun `login walls are rejected as restricted content`() {
+        val results = listOf(
+            extractor.parseEmbedHtml("shortcode", "<html>Login &bull; Instagram</html>"),
+            extractor.parsePostHtml("shortcode", "<html>accounts/login</html>"),
+            extractor.parseApiResponseJson("shortcode", "{\"message\":\"login_required\"}")
+        )
+
+        results.forEach { result ->
+            val error = result.exceptionOrNull()
+            assertTrue(error is AppError.ContentRestricted)
+            assertTrue((error as AppError.ContentRestricted).reason.contains("not supported"))
+        }
+    }
+
+    @Test
+    fun `public embed video remains available without a session`() {
+        val result = extractor.parseEmbedHtml(
+            "shortcode",
+            """<video src="https://cdn.example/video.mp4"></video>"""
+        )
+
+        assertTrue(result.isSuccess)
+        assertEquals("https://cdn.example/video.mp4", result.getOrThrow().videoUrl)
+    }
 
     @Test
     fun `test unescapeHtmlEntities decodes standard entities`() {

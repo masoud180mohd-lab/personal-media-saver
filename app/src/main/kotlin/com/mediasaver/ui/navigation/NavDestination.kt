@@ -18,7 +18,6 @@ sealed class Screen(
     data object History : Screen("history", "History", Icons.Rounded.History)
     data object Status : Screen("status", "Status", Icons.Rounded.PhotoLibrary)
     data object Settings : Screen("settings", "Settings", Icons.Rounded.Settings)
-    data object InstagramLogin : Screen("instagram_login", "Instagram Login", Icons.Rounded.Settings)
 
     companion object {
         val bottomNavItems get() = listOf(Home, Downloads, History, Status)
