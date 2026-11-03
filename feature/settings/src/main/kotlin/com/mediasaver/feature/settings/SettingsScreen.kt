@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.DarkMode
@@ -26,8 +25,6 @@ import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.LightMode
-import androidx.compose.material.icons.rounded.Login
-import androidx.compose.material.icons.rounded.Logout
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Security
@@ -35,15 +32,12 @@ import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -78,30 +72,10 @@ import kotlin.math.roundToInt
 @Composable
 fun SettingsScreen(
     modifier: Modifier = Modifier,
-    viewModel: SettingsViewModel = hiltViewModel(),
-    onNavigateToInstagramLogin: () -> Unit = {},
-    instagramSessionManager: Any? = null
+    viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
-
-    // Check Instagram login status
-    val isInstagramLoggedIn = remember(instagramSessionManager) {
-        try {
-            val method = instagramSessionManager?.javaClass?.getMethod("isLoggedIn")
-            method?.invoke(instagramSessionManager) as? Boolean ?: false
-        } catch (_: Exception) {
-            false
-        }
-    }
-    var igLoggedIn by remember { mutableStateOf(isInstagramLoggedIn) }
-
-    LaunchedEffect(Unit) {
-        try {
-            val method = instagramSessionManager?.javaClass?.getMethod("isLoggedIn")
-            igLoggedIn = method?.invoke(instagramSessionManager) as? Boolean ?: false
-        } catch (_: Exception) {}
-    }
 
     LaunchedEffect(uiState.userMessage) {
         uiState.userMessage?.let { msg ->
@@ -113,20 +87,11 @@ fun SettingsScreen(
     SettingsScreenContent(
         modifier = modifier,
         uiState = uiState,
-        igLoggedIn = igLoggedIn,
         snackbarHostState = snackbarHostState,
         onUpdateThemeMode = { viewModel.updateThemeMode(it) },
         onUpdatePreferredQuality = { viewModel.updatePreferredQuality(it) },
         onUpdateMaxConcurrentDownloads = { viewModel.updateMaxConcurrentDownloads(it) },
         onResetToDefaults = { viewModel.resetToDefaults() },
-        onNavigateToInstagramLogin = onNavigateToInstagramLogin,
-        onInstagramLogout = {
-            try {
-                val method = instagramSessionManager?.javaClass?.getMethod("clearSession")
-                method?.invoke(instagramSessionManager)
-                igLoggedIn = false
-            } catch (_: Exception) {}
-        }
     )
 }
 
@@ -134,14 +99,11 @@ fun SettingsScreen(
 fun SettingsScreenContent(
     modifier: Modifier = Modifier,
     uiState: SettingsUiState,
-    igLoggedIn: Boolean,
     snackbarHostState: SnackbarHostState,
     onUpdateThemeMode: (ThemeMode) -> Unit,
     onUpdatePreferredQuality: (String) -> Unit,
     onUpdateMaxConcurrentDownloads: (Int) -> Unit,
-    onResetToDefaults: () -> Unit,
-    onNavigateToInstagramLogin: () -> Unit,
-    onInstagramLogout: () -> Unit
+    onResetToDefaults: () -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
     var showResetDialog by remember { mutableStateOf(false) }
@@ -164,7 +126,7 @@ fun SettingsScreenContent(
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = "Preferences, storage & account configuration",
+                    text = "Preferences & storage configuration",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -254,32 +216,6 @@ fun SettingsScreenContent(
 
                     Spacer(modifier = Modifier.height(4.dp))
 
-                    // Instagram Account Session
-                    SettingsRow(
-                        icon = if (igLoggedIn) Icons.Rounded.Logout else Icons.Rounded.Login,
-                        title = "Instagram Account",
-                        subtitle = if (igLoggedIn) "Logged in — Reels & Stories enabled" else "Login required for protected reels",
-                        trailingContent = {
-                            if (igLoggedIn) {
-                                OutlinedButton(
-                                    onClick = onInstagramLogout,
-                                    shape = CircleShape
-                                ) {
-                                    Text("Logout", style = MaterialTheme.typography.labelSmall)
-                                }
-                            } else {
-                                Button(
-                                    onClick = onNavigateToInstagramLogin,
-                                    shape = CircleShape,
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = MaterialTheme.colorScheme.primary
-                                    )
-                                ) {
-                                    Text("Login", style = MaterialTheme.typography.labelSmall)
-                                }
-                            }
-                        }
-                    )
                 }
             }
 
@@ -493,14 +429,11 @@ private fun SettingsScreenDarkPreview() {
                 ),
                 appVersion = "1.0.0"
             ),
-            igLoggedIn = true,
             snackbarHostState = remember { SnackbarHostState() },
             onUpdateThemeMode = {},
             onUpdatePreferredQuality = {},
             onUpdateMaxConcurrentDownloads = {},
             onResetToDefaults = {},
-            onNavigateToInstagramLogin = {},
-            onInstagramLogout = {}
         )
     }
 }
@@ -518,14 +451,11 @@ private fun SettingsScreenLightPreview() {
                 ),
                 appVersion = "1.0.0"
             ),
-            igLoggedIn = false,
             snackbarHostState = remember { SnackbarHostState() },
             onUpdateThemeMode = {},
             onUpdatePreferredQuality = {},
             onUpdateMaxConcurrentDownloads = {},
             onResetToDefaults = {},
-            onNavigateToInstagramLogin = {},
-            onInstagramLogout = {}
         )
     }
 }

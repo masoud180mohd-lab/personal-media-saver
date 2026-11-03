@@ -15,7 +15,6 @@ import androidx.compose.ui.Modifier
 import com.mediasaver.core.domain.usecase.GetActiveDownloadsUseCase
 import com.mediasaver.core.domain.usecase.GetSettingsUseCase
 import com.mediasaver.core.model.ThemeMode
-import com.mediasaver.platform.instagram.InstagramSessionManager
 import com.mediasaver.ui.MediaSaverApp
 import com.mediasaver.core.ui.theme.MediaSaverTheme
 import dagger.hilt.android.AndroidEntryPoint
@@ -32,9 +31,6 @@ class MainActivity : ComponentActivity() {
 
     @Inject
     lateinit var getActiveDownloadsUseCase: GetActiveDownloadsUseCase
-
-    @Inject
-    lateinit var instagramSessionManager: InstagramSessionManager
 
     private val sharedUrlState = mutableStateOf<String?>(null)
 
@@ -61,8 +57,7 @@ class MainActivity : ComponentActivity() {
                 ) {
                     MediaSaverApp(
                         sharedUrl = sharedUrlState.value,
-                        getActiveDownloadsUseCase = getActiveDownloadsUseCase,
-                        instagramSessionManager = instagramSessionManager
+                        getActiveDownloadsUseCase = getActiveDownloadsUseCase
                     )
                 }
             }
