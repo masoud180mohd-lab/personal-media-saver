@@ -41,6 +41,10 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.kotlinx.coroutines.android)
 
+    testImplementation(libs.room.runtime)
+    testImplementation(libs.room.ktx)
+    testImplementation(libs.androidx.test.ext)
+    testImplementation(libs.androidx.test.core)
     testImplementation(libs.junit)
     testImplementation(libs.mockwebserver)
     testImplementation(libs.turbine)

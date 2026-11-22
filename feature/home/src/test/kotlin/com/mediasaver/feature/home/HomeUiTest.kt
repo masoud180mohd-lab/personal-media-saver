@@ -16,7 +16,8 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Rule
@@ -84,32 +85,33 @@ class HomeUiTest {
                 onProcessUrl = {},
                 onPaste = {},
                 onSelectStream = {},
-                onStartDownload = {}
+                onStartDownload = {},
+                onStartBatchDownload = {}
             )
         }
 
-        composeTestRule.onNodeWithText("Download Media").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Save Media").assertIsDisplayed()
         composeTestRule.onNodeWithText("Fetch").assertIsNotEnabled()
     }
 
     @Test
     fun `HomeScreenContent enables fetch button when url is entered`() {
-        var enteredUrl = ""
+        val enteredUrl = androidx.compose.runtime.mutableStateOf("")
         composeTestRule.setContent {
             HomeScreenContent(
-                uiState = HomeUiState(urlInput = enteredUrl),
+                uiState = HomeUiState(urlInput = enteredUrl.value),
                 snackbarHostState = SnackbarHostState(),
-                onUrlChange = { enteredUrl = it },
+                onUrlChange = { enteredUrl.value = it },
                 onProcessUrl = {},
                 onPaste = {},
                 onSelectStream = {},
-                onStartDownload = {}
+                onStartDownload = {},
+                onStartBatchDownload = {}
             )
         }
 
-        // Entering text doesn't automatically recompose in the fake state unless we use mutableStateOf,
-        // so we'll just test the state mapping
-        composeTestRule.onNodeWithText("Fetch").assertIsNotEnabled()
+        composeTestRule.onNode(hasSetTextAction()).performTextInput("https://www.youtube.com/watch?v=fixture")
+        composeTestRule.onNodeWithText("Fetch").assertIsEnabled()
     }
     
     @Test
@@ -136,11 +138,12 @@ class HomeUiTest {
                 onProcessUrl = {},
                 onPaste = {},
                 onSelectStream = {},
-                onStartDownload = {}
+                onStartDownload = {},
+                onStartBatchDownload = {}
             )
         }
 
-        composeTestRule.onNodeWithText("Awesome Video Title").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Download Now").assertIsEnabled()
+        composeTestRule.onNodeWithText("Awesome Video Title").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("Download").performScrollTo().assertIsDisplayed().assertIsEnabled()
     }
 }

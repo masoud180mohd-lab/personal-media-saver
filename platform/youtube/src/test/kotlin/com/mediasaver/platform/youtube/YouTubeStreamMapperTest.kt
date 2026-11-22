@@ -26,6 +26,7 @@ class YouTubeStreamMapperTest {
         assertEquals(360, mapper.parseHeight("360p"))
         assertEquals(2160, mapper.parseHeight("highest"))
         assertEquals(2160, mapper.parseHeight("4k"))
+        assertEquals(1440, mapper.parseHeight("2K"))
         assertEquals(144, mapper.parseHeight("lowest"))
     }
 

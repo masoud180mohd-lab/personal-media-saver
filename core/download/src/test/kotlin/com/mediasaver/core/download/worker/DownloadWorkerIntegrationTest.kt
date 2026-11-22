@@ -1,17 +1,18 @@
 package com.mediasaver.core.download.worker
 
 import android.content.Context
+import android.content.ContentUris
+import android.provider.MediaStore
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import com.mediasaver.core.database.AppDatabase
-import com.mediasaver.core.download.muxing.MuxingEngine
+import com.mediasaver.core.database.MediaSaverDatabase
+import com.mediasaver.core.download.muxing.DefaultMuxingEngine
 import com.mediasaver.core.model.PlatformId
 import com.mediasaver.core.model.StreamInfo
 import com.mediasaver.core.storage.MediaStoreManager
 import com.mediasaver.core.storage.TempFileManager
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
@@ -23,7 +24,9 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
-import java.io.File
+import org.robolectric.Shadows.shadowOf
+import org.robolectric.shadows.ShadowStatFs
+import java.io.ByteArrayOutputStream
 import java.util.UUID
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -33,10 +36,9 @@ class DownloadWorkerIntegrationTest {
 
     private lateinit var mockWebServer: MockWebServer
     private lateinit var okHttpClient: OkHttpClient
-    private lateinit var appDatabase: AppDatabase
+    private lateinit var appDatabase: MediaSaverDatabase
     private lateinit var tempFileManager: TempFileManager
     private lateinit var mediaStoreManager: MediaStoreManager
-    private lateinit var muxingEngine: MuxingEngine
     
     private lateinit var downloadWorker: DownloadWorker
 
@@ -44,6 +46,8 @@ class DownloadWorkerIntegrationTest {
     fun setup() {
         val context = ApplicationProvider.getApplicationContext<Context>()
 
+        // Robolectric reports zero free blocks unless the test models a writable volume.
+        ShadowStatFs.registerStats(context.cacheDir, 100_000, 90_000, 90_000)
         mockWebServer = MockWebServer()
         mockWebServer.start()
 
@@ -51,21 +55,18 @@ class DownloadWorkerIntegrationTest {
 
         appDatabase = Room.inMemoryDatabaseBuilder(
             context,
-            AppDatabase::class.java
+            MediaSaverDatabase::class.java
         ).allowMainThreadQueries().build()
 
         tempFileManager = TempFileManager(context)
         mediaStoreManager = MediaStoreManager(context)
-        
-        // We won't use muxing in this test, so a real instance is fine as long as we avoid adaptive streams
-        muxingEngine = MuxingEngine(context)
 
         downloadWorker = DownloadWorker(
             okHttpClient = okHttpClient,
             downloadDao = appDatabase.downloadDao(),
             tempFileManager = tempFileManager,
             mediaStoreManager = mediaStoreManager,
-            muxingEngine = muxingEngine
+            muxingEngine = DefaultMuxingEngine()
         )
     }
 
@@ -78,6 +79,11 @@ class DownloadWorkerIntegrationTest {
     @Test
     fun `successful progressive download correctly streams and saves to MediaStore`() = runTest {
         // Arrange
+        val collection = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val item = ContentUris.withAppendedId(collection, 1L)
+        val output = ByteArrayOutputStream()
+        val resolver = ApplicationProvider.getApplicationContext<Context>().contentResolver
+        shadowOf(resolver).registerOutputStream(item, output)
         val testContent = "dummy_video_data".toByteArray()
         mockWebServer.enqueue(
             MockResponse()
@@ -121,7 +127,8 @@ class DownloadWorkerIntegrationTest {
         // Verify DB state
         val updatedEntity = appDatabase.downloadDao().getById(downloadId)
         assertEquals("COMPLETED", updatedEntity?.status)
-        assertEquals(testContent.size.toLong(), updatedEntity?.downloadedBytes)
+        assertEquals(item.toString(), result.getOrThrow())
+        org.junit.Assert.assertArrayEquals(testContent, output.toByteArray())
         
         // Verify MediaStore URI format returned
         val uri = result.getOrNull()

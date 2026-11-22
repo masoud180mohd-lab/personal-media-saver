@@ -193,7 +193,7 @@ class DownloadWorker @Inject constructor(
             requestBuilder.header("Referer", "https://www.youtube.com/")
             requestBuilder.header("Origin", "https://www.youtube.com")
         }
-        if (platform == PlatformId.TIKTOK || streamUrl.contains("tiktokcdn.com") || streamUrl.contains("tiktok.com") || streamUrl.contains("tikwm.com")) {
+        if (platform == PlatformId.TIKTOK || streamUrl.contains("tiktokcdn.com") || streamUrl.contains("tiktok.com")) {
             requestBuilder.header("Referer", "https://www.tiktok.com/")
             requestBuilder.header("Origin", "https://www.tiktok.com")
         }
@@ -217,7 +217,7 @@ class DownloadWorker @Inject constructor(
                 // Allow binary/octet-stream responses from known CDN domains
                 val isCdnUrl = streamUrl.contains("googlevideo.com") || streamUrl.contains("fbcdn.net") ||
                     streamUrl.contains("cdninstagram") || streamUrl.contains("instagram.com") ||
-                    streamUrl.contains("tiktokcdn.com") || streamUrl.contains("tikwm.com") ||
+                    streamUrl.contains("tiktokcdn.com") ||
                     platform != null
                 if (!isCdnUrl) {
                     throw AppError.NetworkError(null, "Prohibited or dangerous media Content-Type: '$contentType'")

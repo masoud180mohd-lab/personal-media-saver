@@ -44,7 +44,6 @@ import com.mediasaver.feature.history.HistoryScreen
 import com.mediasaver.feature.home.HomeScreen
 import com.mediasaver.feature.settings.SettingsScreen
 import com.mediasaver.feature.status.StatusBrowserScreen
-import com.mediasaver.platform.instagram.InstagramSessionManager
 import com.mediasaver.ui.navigation.Screen
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -52,7 +51,6 @@ import com.mediasaver.ui.navigation.Screen
 fun MediaSaverApp(
     sharedUrl: String?,
     getActiveDownloadsUseCase: GetActiveDownloadsUseCase,
-    instagramSessionManager: InstagramSessionManager,
     navController: NavHostController = rememberNavController()
 ) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -62,7 +60,6 @@ fun MediaSaverApp(
     val activeCount = activeDownloads.size
 
     val isSettingsOpen = currentRoute == Screen.Settings.route
-    val isInstagramLogin = currentRoute == Screen.InstagramLogin.route
 
     androidx.compose.runtime.LaunchedEffect(sharedUrl) {
         if (!sharedUrl.isNullOrBlank() && currentRoute != Screen.Home.route) {
@@ -85,7 +82,6 @@ fun MediaSaverApp(
                 title = {
                     Text(
                         text = when {
-                            isInstagramLogin -> "Instagram Login"
                             isSettingsOpen -> "Settings"
                             else -> "Personal Media Saver"
                         },
@@ -94,7 +90,7 @@ fun MediaSaverApp(
                     )
                 },
                 navigationIcon = {
-                    if (isSettingsOpen || isInstagramLogin) {
+                    if (isSettingsOpen) {
                         IconButton(onClick = { navController.popBackStack() }) {
                             Icon(
                                 Icons.AutoMirrored.Rounded.ArrowBack,
@@ -104,7 +100,7 @@ fun MediaSaverApp(
                     }
                 },
                 actions = {
-                    if (!isSettingsOpen && !isInstagramLogin) {
+                    if (!isSettingsOpen) {
                         IconButton(onClick = { navController.navigate(Screen.Settings.route) }) {
                             Icon(
                                 Icons.Rounded.Settings,
@@ -120,7 +116,7 @@ fun MediaSaverApp(
             )
         },
         bottomBar = {
-            AnimatedVisibility(visible = !isSettingsOpen && !isInstagramLogin) {
+            AnimatedVisibility(visible = !isSettingsOpen) {
                 NavigationBar(
                     containerColor = MaterialTheme.colorScheme.surfaceContainerLow
                 ) {
@@ -211,24 +207,7 @@ fun MediaSaverApp(
             }
 
             composable(Screen.Settings.route) {
-                SettingsScreen(
-                    onNavigateToInstagramLogin = {
-                        navController.navigate(Screen.InstagramLogin.route)
-                    },
-                    instagramSessionManager = instagramSessionManager
-                )
-            }
-
-            composable(Screen.InstagramLogin.route) {
-                InstagramLoginScreen(
-                    sessionManager = instagramSessionManager,
-                    onLoginSuccess = {
-                        navController.popBackStack()
-                    },
-                    onLoginCancelled = {
-                        navController.popBackStack()
-                    }
-                )
+                SettingsScreen()
             }
         }
     }

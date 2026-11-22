@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import com.mediasaver.core.network.interceptor.PlatformWebDomain
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -32,24 +33,11 @@ class TikTokAdapter @Inject constructor(
     }
 
     override suspend fun extractMediaInfo(url: String): Result<MediaInfo> = withContext(Dispatchers.IO) {
-        // Step 1: Attempt to resolve canonical URL and extract video ID
-        val resolvedUrl = TikTokUrlParser.resolveCanonicalUrl(url, okHttpClient) ?: url
-        val videoId = TikTokUrlParser.extractVideoId(resolvedUrl) ?: ""
-
-        val canonicalUrl = if (videoId.isNotBlank()) {
-            TikTokUrlParser.buildCanonicalWatchUrl(videoId)
-        } else {
-            resolvedUrl
-        }
-
-        // Step 2: Extract via TikWM or web scraping (supports short links and canonical URLs)
-        val extractionResult = tikTokExtractor.extract(canonicalUrl, videoId).let { res ->
-            if (res.isFailure && resolvedUrl != url) {
-                tikTokExtractor.extract(url, videoId)
-            } else {
-                res
-            }
-        }
+        val resolvedUrl = TikTokUrlParser.resolveCanonicalUrl(url, okHttpClient)
+            ?: return@withContext Result.failure(AppError.ExtractionFailed(PlatformId.TIKTOK))
+        val videoId = TikTokUrlParser.extractVideoId(resolvedUrl)
+            ?: return@withContext Result.failure(AppError.ExtractionFailed(PlatformId.TIKTOK))
+        val extractionResult = tikTokExtractor.extract(resolvedUrl, videoId)
 
         if (extractionResult.isFailure) {
             return@withContext Result.failure(
@@ -70,19 +58,16 @@ class TikTokAdapter @Inject constructor(
                 description = details.title,
                 thumbnailUrl = details.thumbnailUrl,
                 durationSeconds = details.durationSeconds,
-                sourceUrl = if (videoId.isNotBlank()) TikTokUrlParser.buildCanonicalWatchUrl(videoId) else resolvedUrl
+                sourceUrl = resolvedUrl
             )
         )
     }
 
     override suspend fun resolveStreams(mediaId: String): Result<List<StreamInfo>> = withContext(Dispatchers.IO) {
-        val canonicalUrl = if (TikTokUrlParser.extractVideoId(mediaId) != null) {
-            TikTokUrlParser.buildCanonicalWatchUrl(mediaId)
-        } else {
-            mediaId
-        }
-
-        val extractionResult = tikTokExtractor.extract(canonicalUrl, mediaId)
+        val videoId = TikTokUrlParser.extractVideoId(mediaId)
+            ?: return@withContext Result.failure(AppError.MediaNotFound(mediaId))
+        val canonicalUrl = TikTokUrlParser.buildCanonicalWatchUrl(videoId)
+        val extractionResult = tikTokExtractor.extract(canonicalUrl, videoId)
         if (extractionResult.isFailure) {
             return@withContext Result.failure(
                 extractionResult.exceptionOrNull() ?: AppError.ExtractionFailed(PlatformId.TIKTOK)
@@ -149,6 +134,7 @@ class TikTokAdapter @Inject constructor(
         try {
             val request = Request.Builder()
                 .url("https://www.tiktok.com")
+                .tag(PlatformWebDomain::class.java, PlatformWebDomain("tiktok.com"))
                 .head()
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
                 .build()

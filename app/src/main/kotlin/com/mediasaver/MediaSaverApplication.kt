@@ -15,6 +15,11 @@ import coil.decode.VideoFrameDecoder
 import com.mediasaver.core.common.AppLogger
 import com.mediasaver.core.download.work.StartupCleanupWorker
 import dagger.hilt.android.HiltAndroidApp
+import javax.inject.Inject
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
 
 /**
  * Main Application entry point for Personal Media Saver.
@@ -24,6 +29,8 @@ import dagger.hilt.android.HiltAndroidApp
  */
 @HiltAndroidApp
 class MediaSaverApplication : Application(), ImageLoaderFactory {
+
+    @Inject lateinit var okHttpClient: OkHttpClient
 
     override fun onCreate() {
         super.onCreate()
@@ -40,6 +47,7 @@ class MediaSaverApplication : Application(), ImageLoaderFactory {
             }
         }
 
+        CoroutineScope(Dispatchers.IO).launch { LegacyInstagramCleanup.run(this@MediaSaverApplication) }
         createNotificationChannel()
         scheduleStartupCleanup()
     }
@@ -69,6 +77,7 @@ class MediaSaverApplication : Application(), ImageLoaderFactory {
 
     override fun newImageLoader(): ImageLoader {
         return ImageLoader.Builder(this)
+            .okHttpClient(okHttpClient)
             .components {
                 add(VideoFrameDecoder.Factory())
             }

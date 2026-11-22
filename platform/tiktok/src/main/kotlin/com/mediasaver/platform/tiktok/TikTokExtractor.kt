@@ -6,6 +6,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import com.mediasaver.core.network.interceptor.PlatformWebDomain
 import org.json.JSONObject
 import java.io.IOException
 import java.net.SocketTimeoutException
@@ -63,17 +64,10 @@ class TikTokExtractor @Inject constructor(
 
     /**
      * Extracts media metadata and direct video stream from a public TikTok URL.
-     * Tier 1: Fast TikWM API (supports both short links & canonical URLs, non-watermarked MP4 + audio)
-     * Tier 2: Public Web Scraping Fallback
      */
     suspend fun extract(url: String, videoId: String): Result<TikTokMediaDetails> =
         withContext(Dispatchers.IO) {
-            // Tier 1: TikWM API
-            extractFromTikWmApi(url, videoId)?.let { return@withContext Result.success(it) }
-
-            // Tier 2: Web Scraping Fallback
-            val canonicalUrl = if (videoId.isNotBlank()) TikTokUrlParser.buildCanonicalWatchUrl(videoId) else url
-            extractFromWebScraping(canonicalUrl, videoId)?.let { return@withContext it }
+            extractFromWebScraping(url, videoId)?.let { return@withContext it }
 
             Result.failure(
                 AppError.ExtractionFailed(
@@ -83,63 +77,10 @@ class TikTokExtractor @Inject constructor(
             )
         }
 
-    private fun extractFromTikWmApi(url: String, videoId: String): TikTokMediaDetails? {
-        val encodedUrl = try {
-            java.net.URLEncoder.encode(url, "UTF-8")
-        } catch (_: Exception) {
-            return null
-        }
-
-        val request = Request.Builder()
-            .url("https://www.tikwm.com/api/?url=$encodedUrl")
-            .header("User-Agent", USER_AGENT)
-            .header("Accept", "application/json")
-            .build()
-
-        val response = try {
-            okHttpClient.newCall(request).execute()
-        } catch (_: Exception) {
-            return null
-        }
-
-        response.use { resp ->
-            if (!resp.isSuccessful) return null
-            val body = resp.body?.string() ?: return null
-            val json = try { JSONObject(body) } catch (_: Exception) { return null }
-            if (json.optInt("code", -1) != 0) return null
-
-            val data = json.optJSONObject("data") ?: return null
-            val play = cleanUrl(data.optString("play"))
-            val wmplay = cleanUrl(data.optString("wmplay"))
-            val chosenUrl = play.ifBlank { wmplay }
-            if (chosenUrl.isBlank()) return null
-
-            val id = data.optString("id").ifBlank { videoId }
-            val title = data.optString("title").takeIf { it.isNotBlank() }
-            val authorObj = data.optJSONObject("author")
-            val author = authorObj?.optString("unique_id")?.ifBlank { authorObj.optString("nickname") }
-            val cover = cleanUrl(data.optString("cover")).ifBlank { cleanUrl(data.optString("origin_cover")) }
-            val duration = data.optInt("duration", 0).takeIf { it > 0 }
-            val music = cleanUrl(data.optString("music")).takeIf { it.isNotBlank() }
-
-            return TikTokMediaDetails(
-                id = id,
-                title = title,
-                author = author,
-                thumbnailUrl = cover.takeIf { it.isNotBlank() },
-                durationSeconds = duration,
-                videoUrl = chosenUrl,
-                watermarkedVideoUrl = wmplay.takeIf { it.isNotBlank() && it != chosenUrl },
-                audioUrl = music,
-                isWatermarkFree = play.isNotBlank(),
-                sourceUrl = url
-            )
-        }
-    }
-
     private fun extractFromWebScraping(canonicalUrl: String, videoId: String): Result<TikTokMediaDetails>? {
         val request = Request.Builder()
             .url(canonicalUrl)
+            .tag(PlatformWebDomain::class.java, PlatformWebDomain("tiktok.com"))
             .header("User-Agent", USER_AGENT)
             .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
             .header("Accept-Language", "en-US,en;q=0.9")

@@ -106,7 +106,7 @@ object UrlValidator {
 
         // Upgrade http to https recommendation: if http, upgrade to https
         val normalizedUrl = if (scheme == "http") {
-            "https://" + trimmed.removePrefix("http://")
+            "https" + trimmed.substring(schemeSeparatorIndex)
         } else {
             trimmed
         }

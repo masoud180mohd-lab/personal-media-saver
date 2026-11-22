@@ -139,6 +139,7 @@ dependencies {
     ksp(libs.hilt.compiler)
 
     // Image Loading & Coroutines
+    implementation(libs.okhttp)
     implementation(libs.coil.compose)
     implementation(libs.coil.video)
     implementation(libs.kotlinx.coroutines.android)
@@ -150,6 +151,7 @@ dependencies {
     implementation(libs.androidx.work.runtime.ktx)
 
     // Testing
+    testImplementation(libs.robolectric)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.test.ext)
     androidTestImplementation(libs.espresso.core)

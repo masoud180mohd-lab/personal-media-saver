@@ -105,4 +105,25 @@ class SecurityUtilsTest {
         assertFalse(SecurityUtils.isLocalOrPrivateIp("8.8.8.8"))
         assertFalse(SecurityUtils.isLocalOrPrivateIp("1.1.1.1"))
     }
+
+    @Test
+    fun `checks IPv6 unique-local and mapped private IPv4 addresses`() {
+        assertTrue(SecurityUtils.isLocalOrPrivateIp("fc00::1"))
+        assertTrue(SecurityUtils.isLocalOrPrivateIp("fdff::1"))
+        assertTrue(SecurityUtils.isLocalOrPrivateIp("::ffff:192.168.1.5"))
+        val bytes = ByteArray(16)
+        bytes[10] = (-1).toByte()
+        bytes[11] = (-1).toByte()
+        bytes[12] = 10
+        bytes[15] = 1
+        val mapped = java.net.Inet6Address.getByAddress(null, bytes, -1)
+        assertTrue(SecurityUtils.isPrivateOrLocalAddress(mapped))
+        assertFalse(SecurityUtils.isLocalOrPrivateIp("2606:4700:4700::1111"))
+    }
+
+    @Test
+    fun `fails closed on malformed numeric literals`() {
+        assertTrue(SecurityUtils.isLocalOrPrivateIp("999.1.2.3"))
+        assertTrue(SecurityUtils.isLocalOrPrivateIp("fc00::invalid"))
+    }
 }

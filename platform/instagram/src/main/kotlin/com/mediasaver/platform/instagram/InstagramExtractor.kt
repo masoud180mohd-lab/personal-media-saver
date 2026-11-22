@@ -7,8 +7,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import com.mediasaver.core.network.interceptor.PlatformWebDomain
 import java.io.IOException
-import java.math.BigInteger
 import java.net.URLDecoder
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -40,7 +40,6 @@ data class InstagramMediaDetails(
 /**
  * Multi-tier extraction engine for Instagram posts and reels.
  *
- * Tier 0: Authenticated API using local encrypted session cookies.
  * Tier 1: Public Embed Page (/embed/captioned/)
  * Tier 2: Post/Reel HTML (OpenGraph & embedded JSON)
  * Tier 3: Web API query (?__a=1&__d=dis)
@@ -50,13 +49,13 @@ data class InstagramMediaDetails(
 @Singleton
 class InstagramExtractor @Inject constructor(
     private val okHttpClient: OkHttpClient,
-    private val sessionManager: InstagramSessionManager
 ) {
 
     companion object {
         private const val USER_AGENT =
             "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
         private const val IG_APP_ID = "936619743392459"
+        private const val PUBLIC_RESTRICTION = "Instagram has restricted public access to this post. Try another public link."
         private const val TAG = "MediaSaver_IgAdapter"
     }
 
@@ -64,153 +63,45 @@ class InstagramExtractor @Inject constructor(
      * Extracts media information for a given shortcode.
      */
     suspend fun extract(shortcode: String): Result<InstagramMediaDetails> = withContext(Dispatchers.IO) {
-        val cookies = sessionManager.getCookies()
-
-        // --- Authenticated Flows (when session cookies are present) ---
-        if (!cookies.isNullOrBlank()) {
-            Log.d(TAG, "Authenticated mode: extracting for $shortcode")
-
-            // 1. Authenticated Mobile API
-            val authApiResult = extractFromAuthenticatedApi(shortcode, cookies)
-            if (authApiResult.isSuccess) {
-                Log.d(TAG, "Tier 0 (AuthApi) SUCCESS")
-                return@withContext authApiResult
-            }
-            Log.w(TAG, "Tier 0 (AuthApi) failed: ${authApiResult.exceptionOrNull()?.message}")
-
-            // 2. Web API with session cookies
-            val webApiResult = extractFromWebApi(shortcode, cookies)
-            if (webApiResult.isSuccess) {
-                Log.d(TAG, "Tier 0 (WebApi with cookies) SUCCESS")
-                return@withContext webApiResult
-            }
-            Log.w(TAG, "Tier 0 (WebApi with cookies) failed: ${webApiResult.exceptionOrNull()?.message}")
-
-            // 3. Post HTML with session cookies
-            val postHtmlResult = extractFromPostHtml(shortcode, cookies)
-            if (postHtmlResult.isSuccess) {
-                Log.d(TAG, "Tier 0 (PostHtml with cookies) SUCCESS")
-                return@withContext postHtmlResult
-            }
-            Log.w(TAG, "Tier 0 (PostHtml with cookies) failed: ${postHtmlResult.exceptionOrNull()?.message}")
-
-            // 4. Embed page with session cookies
-            val embedResult = extractFromEmbedPage(shortcode, cookies)
-            if (embedResult.isSuccess) {
-                Log.d(TAG, "Tier 0 (Embed with cookies) SUCCESS")
-                return@withContext embedResult
-            }
-
-            // If session might be expired, log it
-            if (authApiResult.exceptionOrNull() is AppError.ContentRestricted) {
-                Log.w(TAG, "Session appears expired or invalid")
-            }
-
-            return@withContext Result.failure(
-                AppError.ContentRestricted(
-                    "Instagram haikuweza kupakua video hii. Huenda session yako imeisha au post hii ni private. Tafadhali nenda kwenye Settings kisha u-login tena Instagram."
-                )
-            )
-        }
-
-        // --- Unauthenticated Flows (attempt public endpoints) ---
-        Log.d(TAG, "Unauthenticated mode: attempting public tiers for $shortcode")
-
         // Tier 1: Public Embed Page
-        val embedResult = extractFromEmbedPage(shortcode, null)
+        val embedResult = extractFromEmbedPage(shortcode)
         if (embedResult.isSuccess) {
             Log.d(TAG, "Tier 1 (Public Embed) SUCCESS")
             return@withContext embedResult
         }
 
         // Tier 2: Public Post HTML
-        val postHtmlResult = extractFromPostHtml(shortcode, null)
+        val postHtmlResult = extractFromPostHtml(shortcode)
         if (postHtmlResult.isSuccess) {
             Log.d(TAG, "Tier 2 (Public HTML) SUCCESS")
             return@withContext postHtmlResult
         }
 
         // Tier 3: Public Web API
-        val webApiResult = extractFromWebApi(shortcode, null)
+        val webApiResult = extractFromWebApi(shortcode)
         if (webApiResult.isSuccess) {
             Log.d(TAG, "Tier 3 (Public WebApi) SUCCESS")
             return@withContext webApiResult
         }
 
-        // Unauthenticated extraction failed because Instagram blocks public scraping
-        Log.w(TAG, "All unauthenticated tiers failed for $shortcode — login required")
-        Result.failure(
-            AppError.ContentRestricted(
-                "Instagram inahitaji uwe umeingia (Login). Tafadhali fungua Settings kisha ubonyeze 'Login to Instagram' ili kuwezesha kupakua video na reels."
-            )
-        )
-    }
-
-    /**
-     * Tier 0: Authenticated API using session cookies.
-     */
-    internal fun extractFromAuthenticatedApi(shortcode: String, cookies: String): Result<InstagramMediaDetails> {
-        val csrfToken = Regex("csrftoken=([^;]+)").find(cookies)?.groupValues?.getOrNull(1) ?: ""
-        val mediaId = shortcodeToMediaId(shortcode)
-        val apiUrl = "https://www.instagram.com/api/v1/media/$mediaId/info/"
-
-        val request = Request.Builder()
-            .url(apiUrl)
-            .header("User-Agent", USER_AGENT)
-            .header("Cookie", cookies)
-            .header("X-CSRFToken", csrfToken)
-            .header("X-IG-App-ID", IG_APP_ID)
-            .header("X-Requested-With", "XMLHttpRequest")
-            .header("X-IG-WWW-Claim", "0")
-            .header("Accept", "*/*")
-            .header("Referer", "https://www.instagram.com/p/$shortcode/")
-            .header("Sec-Fetch-Dest", "empty")
-            .header("Sec-Fetch-Mode", "cors")
-            .header("Sec-Fetch-Site", "same-origin")
-            .build()
-
-        return try {
-            val response = okHttpClient.newCall(request).execute()
-            response.use { res ->
-                if (res.code == 404) {
-                    return Result.failure(AppError.MediaNotFound(apiUrl))
-                }
-                if (res.code == 401 || res.code == 403) {
-                    return Result.failure(AppError.ContentRestricted("Instagram session expired"))
-                }
-
-                val json = res.body?.string().orEmpty()
-                Log.d(TAG, "AuthApi response code: ${res.code}, length: ${json.length}")
-
-                if (json.contains("\"require_login\":true") || json.contains("\"message\":\"login_required\"")) {
-                    return Result.failure(AppError.ContentRestricted("Instagram session expired"))
-                }
-
-                parseApiResponseJson(shortcode, json)
-            }
-        } catch (e: IOException) {
-            Result.failure(AppError.NetworkError(e))
-        } catch (e: Exception) {
-            Result.failure(AppError.ExtractionFailed(PlatformId.INSTAGRAM, e))
-        }
+        val failures = listOf(embedResult, postHtmlResult, webApiResult).mapNotNull { it.exceptionOrNull() }
+        val restriction = failures.filterIsInstance<AppError.ContentRestricted>().firstOrNull()
+        Result.failure(restriction ?: failures.last())
     }
 
     /**
      * Tier 1: Extracts media from the public/embed endpoint:
      * https://www.instagram.com/p/{shortcode}/embed/captioned/
      */
-    internal fun extractFromEmbedPage(shortcode: String, cookies: String? = null): Result<InstagramMediaDetails> {
+    internal fun extractFromEmbedPage(shortcode: String): Result<InstagramMediaDetails> {
         val embedUrl = InstagramUrlParser.buildEmbedUrl(shortcode)
         val requestBuilder = Request.Builder()
             .url(embedUrl)
+            .tag(PlatformWebDomain::class.java, PlatformWebDomain("instagram.com"))
             .header("User-Agent", USER_AGENT)
             .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
             .header("Accept-Language", "en-US,en;q=0.9")
             .header("Referer", "https://www.instagram.com/")
-
-        if (!cookies.isNullOrBlank()) {
-            requestBuilder.header("Cookie", cookies)
-        }
 
         return try {
             val response = okHttpClient.newCall(requestBuilder.build()).execute()
@@ -219,9 +110,12 @@ class InstagramExtractor @Inject constructor(
                     return Result.failure(AppError.MediaNotFound(embedUrl))
                 }
 
+                if (res.code == 401 || res.code == 403) {
+                    return Result.failure(AppError.ContentRestricted(PUBLIC_RESTRICTION))
+                }
                 val finalUrl = res.request.url.toString()
                 if (finalUrl.contains("/accounts/login/") || finalUrl.contains("/challenge/")) {
-                    return Result.failure(AppError.ContentRestricted("Instagram requires login"))
+                    return Result.failure(AppError.ContentRestricted(PUBLIC_RESTRICTION))
                 }
 
                 val html = res.body?.string().orEmpty()
@@ -243,7 +137,7 @@ class InstagramExtractor @Inject constructor(
         }
 
         if (html.contains("Login &bull; Instagram") || html.contains("accounts/login") || html.contains("checkpoint_required")) {
-            return Result.failure(AppError.ContentRestricted("Instagram requires login"))
+            return Result.failure(AppError.ContentRestricted(PUBLIC_RESTRICTION))
         }
 
         // 1. Direct Video Tag or embedded video URL
@@ -301,17 +195,14 @@ class InstagramExtractor @Inject constructor(
     /**
      * Tier 2: Canonical Post or Reel HTML page via OpenGraph tags.
      */
-    internal fun extractFromPostHtml(shortcode: String, cookies: String? = null): Result<InstagramMediaDetails> {
+    internal fun extractFromPostHtml(shortcode: String): Result<InstagramMediaDetails> {
         val postUrl = InstagramUrlParser.buildCanonicalPostUrl(shortcode)
         val requestBuilder = Request.Builder()
             .url(postUrl)
+            .tag(PlatformWebDomain::class.java, PlatformWebDomain("instagram.com"))
             .header("User-Agent", USER_AGENT)
             .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
             .header("Accept-Language", "en-US,en;q=0.9")
-
-        if (!cookies.isNullOrBlank()) {
-            requestBuilder.header("Cookie", cookies)
-        }
 
         return try {
             val response = okHttpClient.newCall(requestBuilder.build()).execute()
@@ -320,9 +211,12 @@ class InstagramExtractor @Inject constructor(
                     return Result.failure(AppError.MediaNotFound(postUrl))
                 }
 
+                if (res.code == 401 || res.code == 403) {
+                    return Result.failure(AppError.ContentRestricted(PUBLIC_RESTRICTION))
+                }
                 val finalUrl = res.request.url.toString()
                 if (finalUrl.contains("/accounts/login/")) {
-                    return Result.failure(AppError.ContentRestricted("Instagram requires login"))
+                    return Result.failure(AppError.ContentRestricted(PUBLIC_RESTRICTION))
                 }
 
                 val html = res.body?.string().orEmpty()
@@ -344,7 +238,7 @@ class InstagramExtractor @Inject constructor(
         }
 
         if (html.contains("Login &bull; Instagram") || html.contains("accounts/login")) {
-            return Result.failure(AppError.ContentRestricted("Instagram requires login"))
+            return Result.failure(AppError.ContentRestricted(PUBLIC_RESTRICTION))
         }
 
         // OpenGraph Video
@@ -462,23 +356,16 @@ class InstagramExtractor @Inject constructor(
     /**
      * Tier 3: Queries Instagram Web API endpoint (?__a=1&__d=dis).
      */
-    internal fun extractFromWebApi(shortcode: String, cookies: String? = null): Result<InstagramMediaDetails> {
+    internal fun extractFromWebApi(shortcode: String): Result<InstagramMediaDetails> {
         val apiUrl = InstagramUrlParser.buildApiUrl(shortcode)
         val requestBuilder = Request.Builder()
             .url(apiUrl)
+            .tag(PlatformWebDomain::class.java, PlatformWebDomain("instagram.com"))
             .header("User-Agent", USER_AGENT)
             .header("X-IG-App-ID", IG_APP_ID)
             .header("X-Requested-With", "XMLHttpRequest")
             .header("Accept", "*/*")
             .header("Referer", "https://www.instagram.com/p/$shortcode/")
-
-        if (!cookies.isNullOrBlank()) {
-            requestBuilder.header("Cookie", cookies)
-            val csrfToken = Regex("csrftoken=([^;]+)").find(cookies)?.groupValues?.getOrNull(1) ?: ""
-            if (csrfToken.isNotBlank()) {
-                requestBuilder.header("X-CSRFToken", csrfToken)
-            }
-        }
 
         return try {
             val response = okHttpClient.newCall(requestBuilder.build()).execute()
@@ -487,7 +374,7 @@ class InstagramExtractor @Inject constructor(
                     return Result.failure(AppError.MediaNotFound(apiUrl))
                 }
                 if (res.code == 401 || res.code == 403) {
-                    return Result.failure(AppError.ContentRestricted("Instagram requires login"))
+                    return Result.failure(AppError.ContentRestricted(PUBLIC_RESTRICTION))
                 }
 
                 val json = res.body?.string().orEmpty()
@@ -501,7 +388,7 @@ class InstagramExtractor @Inject constructor(
     }
 
     /**
-     * Parses JSON response from either Web API or Authenticated Mobile API.
+     * Parses JSON response from the public web API.
      */
     internal fun parseApiResponseJson(shortcode: String, json: String): Result<InstagramMediaDetails> {
         if (json.isBlank() || json.startsWith("<!DOCTYPE") || json.startsWith("<html")) {
@@ -509,7 +396,7 @@ class InstagramExtractor @Inject constructor(
         }
 
         if (json.contains("\"message\":\"login_required\"") || json.contains("\"status\":\"fail\"")) {
-            return Result.failure(AppError.ContentRestricted("Instagram requires login"))
+            return Result.failure(AppError.ContentRestricted(PUBLIC_RESTRICTION))
         }
 
         // Extract video URL (handles single video, video_versions array, sidecar, etc.)
@@ -600,23 +487,6 @@ class InstagramExtractor @Inject constructor(
                 carouselItems = distinctCarouselItems
             )
         )
-    }
-
-    /**
-     * Converts an Instagram shortcode to a numeric media ID.
-     * Uses BigInteger to prevent 64-bit Long integer overflow on 11+ character shortcodes.
-     */
-    private fun shortcodeToMediaId(shortcode: String): String {
-        val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
-        var id = BigInteger.ZERO
-        val sixtyFour = BigInteger.valueOf(64)
-        for (char in shortcode) {
-            val idx = alphabet.indexOf(char)
-            if (idx >= 0) {
-                id = id.multiply(sixtyFour).add(BigInteger.valueOf(idx.toLong()))
-            }
-        }
-        return id.toString()
     }
 
     private fun sanitizeUrl(url: String): String {

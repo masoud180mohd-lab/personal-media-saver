@@ -50,9 +50,9 @@ class RetryPolicyTest {
         assertFalse(retryPolicy.shouldRetry(0, AppError.InvalidUrl("invalid://url")))
         assertFalse(retryPolicy.shouldRetry(0, AppError.UnsupportedPlatform("unknown")))
         assertFalse(retryPolicy.shouldRetry(0, AppError.StorageFull(1000L)))
-        assertFalse(retryPolicy.shouldRetry(0, AppError.PermissionDenied()))
-        assertFalse(retryPolicy.shouldRetry(0, AppError.MediaNotFound()))
-        assertFalse(retryPolicy.shouldRetry(0, AppError.ContentRestricted()))
+        assertFalse(retryPolicy.shouldRetry(0, AppError.PermissionDenied(permission = "storage")))
+        assertFalse(retryPolicy.shouldRetry(0, AppError.MediaNotFound(url = "https://example.com/media")))
+        assertFalse(retryPolicy.shouldRetry(0, AppError.ContentRestricted(reason = "Private post")))
     }
 
     @Test

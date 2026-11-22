@@ -1,17 +1,58 @@
 package com.mediasaver.platform.instagram
 
+import com.mediasaver.core.network.di.NetworkModule
+import com.mediasaver.core.network.interceptor.SsrfRedirectInterceptor
+import okhttp3.CookieJar
 import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-import io.mockk.mockk
+import kotlinx.coroutines.runBlocking
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import com.mediasaver.core.model.error.AppError
 
+@RunWith(RobolectricTestRunner::class)
+@Config(manifest = Config.NONE, sdk = [33])
 class InstagramExtractorTest {
 
-    private val extractor = InstagramExtractor(
-        OkHttpClient(),
-        mockk(relaxed = true)
-    )
+    private val extractor = InstagramExtractor(OkHttpClient())
+
+    @Test
+    fun `the production Instagram client has no cookie storage`() {
+        val client = NetworkModule.provideOkHttpClient(SsrfRedirectInterceptor())
+        assertSame(CookieJar.NO_COOKIES, client.cookieJar)
+    }
+
+    @Test
+    fun `public extraction never reuses a session from a blocked response`() = runBlocking {
+        val requests = mutableListOf<okhttp3.Request>()
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            requests.add(request)
+            Response.Builder().request(request).protocol(Protocol.HTTP_1_1)
+                .code(403).message("Forbidden").body("".toResponseBody())
+                .header("Set-Cookie", "sessionid=fixture; Secure; Path=/").build()
+        }.build()
+        val publicExtractor = InstagramExtractor(client)
+        repeat(2) {
+            assertTrue(publicExtractor.extract("public").exceptionOrNull() is AppError.ContentRestricted)
+        }
+        assertEquals(6, requests.size)
+        requests.forEach {
+            assertEquals("www.instagram.com", it.url.host)
+            assertNull(it.header("Cookie"))
+            assertNull(it.header("Authorization"))
+        }
+        assertTrue(client.cookieJar.loadForRequest(requests.first().url).isEmpty())
+    }
 
     @Test
     fun `test unescapeHtmlEntities decodes standard entities`() {
@@ -71,7 +112,7 @@ class InstagramExtractorTest {
                                 "is_video": false
                             }
                         }
-                    ]}}]
+                    ]}}
             </script>
             </body>
             </html>

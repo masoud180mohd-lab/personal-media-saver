@@ -33,6 +33,11 @@ class UrlValidatorTest {
     }
 
     @Test
+    fun `upgrades mixed-case HTTP without duplicating the scheme`() {
+        assertEquals("https://example.com", UrlValidator.validate("HTTP://example.com").getOrThrow().normalizedUrl)
+    }
+
+    @Test
     fun `rejects blank and whitespace-only URLs`() {
         val emptyResult = UrlValidator.validate("")
         assertTrue(emptyResult.isFailure)

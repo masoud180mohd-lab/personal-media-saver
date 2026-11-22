@@ -3,6 +3,7 @@ package com.mediasaver.platform.youtube.downloader
 import android.util.Log
 import okhttp3.Cookie
 import okhttp3.CookieJar
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
@@ -11,7 +12,6 @@ import org.schabi.newpipe.extractor.downloader.Downloader
 import org.schabi.newpipe.extractor.downloader.Request
 import org.schabi.newpipe.extractor.downloader.Response
 import java.io.IOException
-import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -32,41 +32,11 @@ class NewPipeDownloader @Inject constructor(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
     }
 
-    private val cookieStore = ConcurrentHashMap<String, MutableList<Cookie>>()
-
-    /**
-     * Build a dedicated client for NewPipe with:
-     * - OkHttp built-in redirect following ENABLED (YouTube API relies heavily on redirects)
-     * - Cookie jar for session persistence
-     * The parent client's SsrfRedirectInterceptor is still inherited for SSRF protection.
-     */
+    // Request cookies live only for this process. OkHttp performs domain, path and secure matching.
     private val internalClient = client.newBuilder()
-        .followRedirects(true)
-        .followSslRedirects(true)
-        .cookieJar(object : CookieJar {
-            override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
-                val host = url.host
-                val existing = cookieStore.getOrPut(host) { mutableListOf() }
-                synchronized(existing) {
-                    cookies.forEach { newCookie ->
-                        existing.removeAll { it.name == newCookie.name }
-                        existing.add(newCookie)
-                    }
-                }
-            }
-
-            override fun loadForRequest(url: HttpUrl): List<Cookie> {
-                val result = mutableListOf<Cookie>()
-                cookieStore.forEach { (domain, cookies) ->
-                    if (url.host == domain || url.host.endsWith(".$domain")) {
-                        synchronized(cookies) {
-                            result.addAll(cookies)
-                        }
-                    }
-                }
-                return result
-            }
-        })
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .cookieJar(InMemoryCookieJar())
         .build()
 
     @Throws(IOException::class)
@@ -103,7 +73,8 @@ class NewPipeDownloader @Inject constructor(
         }
 
         // YouTube consent and localization cookies to bypass consent walls
-        if (url.contains("youtube.com") || url.contains("youtu.be") || url.contains("googlevideo.com")) {
+        val host = url.toHttpUrl().host
+        if (listOf("youtube.com", "youtu.be", "googlevideo.com").any { host == it || host.endsWith(".$it") }) {
             val hasCookieHeader = headers?.keys?.any { it.equals("Cookie", ignoreCase = true) } == true
             if (!hasCookieHeader) {
                 requestBuilder.addHeader("Cookie", "SOCS=CAESEwgDEgk0ODE3Nzk3MjQaAmVuIAEaBgiA_LyaBg; CONSENT=PENDING+999")
@@ -143,5 +114,26 @@ class NewPipeDownloader @Inject constructor(
             Log.e(TAG, "Network error for $url: ${e.message}", e)
             throw e
         }
+    }
+}
+
+internal class InMemoryCookieJar : CookieJar {
+    private val stored = mutableListOf<Cookie>()
+
+    @Synchronized
+    override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+        val now = System.currentTimeMillis()
+        stored.removeAll { it.expiresAt <= now }
+        for (cookie in cookies) {
+            stored.removeAll { it.name == cookie.name && it.domain == cookie.domain && it.path == cookie.path }
+            if (cookie.expiresAt > now) stored.add(cookie)
+        }
+    }
+
+    @Synchronized
+    override fun loadForRequest(url: HttpUrl): List<Cookie> {
+        val now = System.currentTimeMillis()
+        stored.removeAll { it.expiresAt <= now }
+        return stored.filter { it.matches(url) }.sortedByDescending { it.path.length }
     }
 }

@@ -4,6 +4,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import com.mediasaver.core.network.interceptor.PlatformWebDomain
 import java.util.regex.Pattern
 
 /**
@@ -29,7 +31,7 @@ object TikTokUrlParser {
 
     // Short links: vm.tiktok.com/..., vt.tiktok.com/..., tiktok.com/t/...
     private val SHORT_LINK_PATTERN = Pattern.compile(
-        "^https?://(?:(?:vm|vt)\\.tiktok\\.com/|tiktok\\.com/t/)([a-zA-Z0-9_-]+)/?(?:[?#].*)?$",
+        "^https?://(?:(?:vm|vt)\\.tiktok\\.com/|(?:www\\.)?tiktok\\.com/t/)([a-zA-Z0-9_-]+)/?(?:[?#].*)?$",
         Pattern.CASE_INSENSITIVE
     )
 
@@ -38,13 +40,8 @@ object TikTokUrlParser {
      */
     fun isTikTokUrl(url: String): Boolean {
         if (url.isBlank()) return false
-        val trimmed = url.trim().lowercase()
-
-        val hasTikTokDomain = trimmed.contains("tiktok.com") ||
-                trimmed.contains("vm.tiktok.com") ||
-                trimmed.contains("vt.tiktok.com")
-        if (!hasTikTokDomain) return false
-
+        val host = url.trim().toHttpUrlOrNull()?.host ?: return false
+        if (!PlatformWebDomain("tiktok.com").accepts(host)) return false
         return isShortUrl(url) || extractVideoId(url) != null
     }
 
@@ -54,10 +51,7 @@ object TikTokUrlParser {
     fun isShortUrl(url: String): Boolean {
         if (url.isBlank()) return false
         val trimmed = url.trim()
-        return SHORT_LINK_PATTERN.matcher(trimmed).matches() ||
-                trimmed.contains("vm.tiktok.com", ignoreCase = true) ||
-                trimmed.contains("vt.tiktok.com", ignoreCase = true) ||
-                trimmed.contains("tiktok.com/t/", ignoreCase = true)
+        return SHORT_LINK_PATTERN.matcher(trimmed).matches()
     }
 
     /**
@@ -100,74 +94,25 @@ object TikTokUrlParser {
     }
 
     /**
-     * Safely follows HTTP redirects up to [maxRedirects] (default: 5) to resolve short links
-     * into a canonical watch URL containing the video ID.
+     * Resolves share links using the shared HTTPS client and its five-hop redirect policy.
      */
-    suspend fun resolveCanonicalUrl(
-        url: String,
-        client: OkHttpClient,
-        maxRedirects: Int = 5
-    ): String? = withContext(Dispatchers.IO) {
-        if (url.isBlank()) return@withContext null
-        var currentUrl = url.trim()
+    suspend fun resolveCanonicalUrl(url: String, client: OkHttpClient): String? = withContext(Dispatchers.IO) {
+        if (!isTikTokUrl(url)) return@withContext null
+        if (!isShortUrl(url)) return@withContext url
 
-        // If video ID is already known, return immediately
-        if (extractVideoId(currentUrl) != null) {
-            return@withContext currentUrl
-        }
-
-        // Dedicated client preventing automatic infinite redirect loops
-        val noRedirectClient = client.newBuilder()
-            .followRedirects(false)
-            .followSslRedirects(false)
+        val request = Request.Builder().url(url).head()
+            .tag(PlatformWebDomain::class.java, PlatformWebDomain("tiktok.com"))
+            .header("User-Agent", "Mozilla/5.0")
             .build()
-
-        var redirectCount = 0
-        while (redirectCount < maxRedirects) {
-            val request = Request.Builder()
-                .url(currentUrl)
-                .head()
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
-                .build()
-
-            val response = try {
-                noRedirectClient.newCall(request).execute()
-            } catch (_: Exception) {
-                return@withContext currentUrl.takeIf { extractVideoId(it) != null }
-            }
-
-            response.use { resp ->
-                val finalUrl = resp.request.url.toString()
-                if (extractVideoId(finalUrl) != null) {
-                    return@withContext finalUrl
-                }
-
-                val code = resp.code
-                if (code in 300..399) {
-                    val location = resp.header("Location")
-                    if (!location.isNullOrBlank()) {
-                        currentUrl = if (location.startsWith("http://") || location.startsWith("https://")) {
-                            location
-                        } else {
-                            val base = resp.request.url
-                            base.resolve(location)?.toString() ?: location
-                        }
-                        redirectCount++
-
-                        // Check if we reached a canonical watch URL
-                        if (extractVideoId(currentUrl) != null) {
-                            return@withContext currentUrl
-                        }
-                    } else {
-                        return@withContext currentUrl
-                    }
-                } else {
-                    return@withContext finalUrl.ifBlank { currentUrl }
+        try {
+            client.newCall(request).execute().use { response ->
+                response.request.url.toString().takeIf {
+                    response.isSuccessful && isTikTokUrl(it) && extractVideoId(it) != null
                 }
             }
+        } catch (_: java.io.IOException) {
+            null
         }
-
-        return@withContext currentUrl
     }
 
     /**

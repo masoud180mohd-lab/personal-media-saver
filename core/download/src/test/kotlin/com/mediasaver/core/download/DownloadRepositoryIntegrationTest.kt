@@ -5,15 +5,19 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import app.cash.turbine.test
-import com.mediasaver.core.database.AppDatabase
+import com.mediasaver.core.database.MediaSaverDatabase
 import com.mediasaver.core.database.entity.DownloadEntity
 import com.mediasaver.core.download.queue.DownloadQueueManager
 import com.mediasaver.core.download.repository.DownloadRepositoryImpl
-import com.mediasaver.core.download.worker.DownloadProgress
+import com.mediasaver.core.database.dao.DownloadDao
+import com.mediasaver.core.download.muxing.DefaultMuxingEngine
+import com.mediasaver.core.download.retry.RetryPolicy
+import com.mediasaver.core.storage.MediaStoreManager
+import com.mediasaver.core.storage.TempFileManager
+import okhttp3.OkHttpClient
 import com.mediasaver.core.download.worker.DownloadWorker
 import com.mediasaver.core.model.DownloadStatus
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -23,62 +27,30 @@ import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import java.util.UUID
 
-// A basic fake to simulate the worker's progress flow
-class FakeDownloadWorker {
-    val progressFlow = MutableSharedFlow<DownloadProgress>(replay = 1)
-    suspend fun emitProgress(progress: DownloadProgress) {
-        progressFlow.emit(progress)
-    }
-}
-
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(AndroidJUnit4::class)
 @Config(sdk = [33])
 class DownloadRepositoryIntegrationTest {
 
-    private lateinit var appDatabase: AppDatabase
+    private lateinit var appDatabase: MediaSaverDatabase
     private lateinit var downloadRepository: DownloadRepositoryImpl
     
-    // We mock the worker and queue manager since their logic is tested separately
-    private lateinit var fakeWorkerProgressFlow: MutableSharedFlow<DownloadProgress>
-
     @Before
     fun setup() {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        appDatabase = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+        appDatabase = Room.inMemoryDatabaseBuilder(context, MediaSaverDatabase::class.java)
             .allowMainThreadQueries()
             .build()
             
-        fakeWorkerProgressFlow = MutableSharedFlow(replay = 1)
-        
-        // We use a real DownloadWorker with mock dependencies to satisfy the constructor
-        // but we won't call executeDownload in this DB mapping test.
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        val mockWebServer = okhttp3.mockwebserver.MockWebServer()
-        val okHttpClient = okhttp3.OkHttpClient.Builder().build()
-        val tempFileManager = com.mediasaver.core.storage.TempFileManager(context)
-        val mediaStoreManager = com.mediasaver.core.storage.MediaStoreManager(context)
-        val muxingEngine = com.mediasaver.core.download.muxing.MuxingEngine(context)
-
-        val realWorker = DownloadWorker(
-            okHttpClient = okHttpClient,
-            downloadDao = appDatabase.downloadDao(),
-            tempFileManager = tempFileManager,
-            mediaStoreManager = mediaStoreManager,
-            muxingEngine = muxingEngine
-        )
-
-        downloadRepository = DownloadRepositoryImpl(
-            downloadQueueManager = object : DownloadQueueManager {
-                override val activeTasksFlow = kotlinx.coroutines.flow.emptyFlow<List<com.mediasaver.core.model.DownloadTask>>()
-                override val allTasksFlow = kotlinx.coroutines.flow.emptyFlow<List<com.mediasaver.core.model.DownloadTask>>()
-                override suspend fun enqueue(task: com.mediasaver.core.model.DownloadTask, videoStream: com.mediasaver.core.model.StreamInfo, audioStream: com.mediasaver.core.model.StreamInfo?) {}
-                override suspend fun cancel(downloadId: String) {}
-                override suspend fun retry(downloadId: String) {}
-            },
-            downloadDao = appDatabase.downloadDao(),
-            downloadWorker = realWorker
-        )
+        val dao = appDatabase.downloadDao()
+        val tempFiles = TempFileManager(context)
+        val worker = DownloadWorker(OkHttpClient(), dao, tempFiles, MediaStoreManager(context), DefaultMuxingEngine())
+        // Isolate the repository query from asynchronous recovery of this test's active row.
+        val queueDao = object : DownloadDao by dao {
+            override suspend fun findActiveDownloads(): List<DownloadEntity> = emptyList()
+        }
+        val queue = DownloadQueueManager(context, queueDao, appDatabase.streamOptionDao(), worker, tempFiles, RetryPolicy())
+        downloadRepository = DownloadRepositoryImpl(queue, dao, worker)
     }
 
     @After

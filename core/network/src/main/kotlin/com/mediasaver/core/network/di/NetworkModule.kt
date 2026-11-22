@@ -5,7 +5,10 @@ import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import com.mediasaver.core.common.SecurityUtils
+import okhttp3.Dns
 import okhttp3.OkHttpClient
+import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
 
@@ -26,6 +29,13 @@ object NetworkModule {
     @Singleton
     fun provideOkHttpClient(ssrfRedirectInterceptor: SsrfRedirectInterceptor): OkHttpClient {
         return OkHttpClient.Builder()
+            .dns(object : Dns {
+                override fun lookup(hostname: String) = Dns.SYSTEM.lookup(hostname).also { addresses ->
+                    if (addresses.isEmpty() || addresses.any(SecurityUtils::isPrivateOrLocalAddress)) {
+                        throw UnknownHostException("No permitted network address for host")
+                    }
+                }
+            })
             .connectTimeout(60, TimeUnit.SECONDS)
             .readTimeout(300, TimeUnit.SECONDS)
             .writeTimeout(60, TimeUnit.SECONDS)

@@ -1,7 +1,6 @@
 package com.mediasaver.core.common
 
 import java.net.InetAddress
-import java.net.URI
 
 /**
  * Security utilities enforcing strict defense-in-depth boundaries across URL parsing,
@@ -119,7 +118,10 @@ object SecurityUtils {
     fun isLocalOrPrivateIp(host: String?): Boolean {
         if (host.isNullOrBlank()) return true
 
-        val cleanHost = host.trim().trim('[', ']').lowercase()
+        val trimmed = host.trim()
+        if (trimmed.startsWith('[') != trimmed.endsWith(']')) return true
+        val cleanHost = trimmed.removeSurrounding("[", "]").lowercase()
+        if (cleanHost.isEmpty() || '[' in cleanHost || ']' in cleanHost) return true
 
         // Fast string matches for common local identifiers
         if (cleanHost == "localhost" ||
@@ -135,48 +137,34 @@ object SecurityUtils {
             return true
         }
 
-        // Direct numeric IPv4 octet checks to avoid unnecessary DNS resolution for literals
-        val ipv4Parts = cleanHost.split(".")
-        if (ipv4Parts.size == 4 && ipv4Parts.all { it.toIntOrNull() != null }) {
-            val octets = ipv4Parts.map { it.toInt() }
-            val first = octets[0]
-            val second = octets[1]
-
-            // 127.0.0.0/8 (Loopback)
-            if (first == 127) return true
-            // 10.0.0.0/8 (Private)
-            if (first == 10) return true
-            // 172.16.0.0/12 (Private)
-            if (first == 172 && second in 16..31) return true
-            // 192.168.0.0/16 (Private)
-            if (first == 192 && second == 168) return true
-            // 169.254.0.0/16 (Link-Local / APIPA)
-            if (first == 169 && second == 254) return true
-            // 0.0.0.0/8 (Current network)
-            if (first == 0) return true
-            // 100.64.0.0/10 (Carrier-grade NAT)
-            if (first == 100 && second in 64..127) return true
-            // 224.0.0.0/4 (Multicast) & 240.0.0.0/4 (Reserved)
-            if (first >= 224) return true
+        // Malformed literals are invalid. Hostname lookup failures here can also mean
+        // Android disallowed DNS on the UI thread. The transport checks its actual DNS answers.
+        val literal = ':' in cleanHost || cleanHost.all { it.isDigit() || it == '.' }
+        if (literal && ':' !in cleanHost) {
+            val parts = cleanHost.split('.')
+            if (parts.size != 4 || parts.any { (it.toIntOrNull() ?: -1) !in 0..255 }) return true
         }
-
         return try {
-            val addresses = InetAddress.getAllByName(cleanHost)
-            addresses.any { isPrivateOrLocalAddress(it) }
+            InetAddress.getAllByName(cleanHost).any(::isPrivateOrLocalAddress)
         } catch (_: Exception) {
-            // If host cannot be resolved, return false here and let HTTP request handle resolution failure
-            false
+            literal
         }
     }
 
-    /**
-     * Evaluates whether an [InetAddress] is loopback, site-local, link-local, multicast, or any-local.
-     */
     fun isPrivateOrLocalAddress(address: InetAddress): Boolean {
-        return address.isLoopbackAddress ||
-                address.isSiteLocalAddress ||
-                address.isLinkLocalAddress ||
-                address.isAnyLocalAddress ||
-                address.isMulticastAddress
+        val bytes = address.address
+        if (bytes.size == 16) {
+            if ((bytes[0].toInt() and 0xfe) == 0xfc) return true
+            val mapped = (0 until 10).all { bytes[it] == 0.toByte() } &&
+                bytes[10] == (-1).toByte() && bytes[11] == (-1).toByte()
+            if (mapped) return isPrivateOrLocalAddress(InetAddress.getByAddress(bytes.copyOfRange(12, 16)))
+        }
+        if (bytes.size == 4) {
+            val first = bytes[0].toInt() and 255
+            val second = bytes[1].toInt() and 255
+            if (first == 0 || first >= 224 || (first == 100 && second in 64..127)) return true
+        }
+        return address.isLoopbackAddress || address.isSiteLocalAddress || address.isLinkLocalAddress ||
+            address.isAnyLocalAddress || address.isMulticastAddress
     }
 }

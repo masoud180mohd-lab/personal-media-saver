@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import okhttp3.ResponseBody.Companion.toResponseBody
 
 class TikTokUrlParserTest {
 
@@ -83,11 +84,13 @@ class TikTokUrlParserTest {
     }
 
     @Test
-    fun `resolveCanonicalUrl resolves real short link`() = kotlinx.coroutines.runBlocking {
-        val client = okhttp3.OkHttpClient()
-        val resolved = TikTokUrlParser.resolveCanonicalUrl("https://vm.tiktok.com/ZSqvw3hdh/", client)
-        val videoId = if (resolved != null) TikTokUrlParser.extractVideoId(resolved) else null
-        org.junit.Assert.assertNotNull("Resolved URL should not be null", resolved)
-        org.junit.Assert.assertNotNull("Extracted videoId should not be null", videoId)
+    fun `short link resolution reads canonical URL from the final response`() = kotlinx.coroutines.runBlocking {
+        val canonical = TikTokUrlParser.buildCanonicalWatchUrl(sampleVideoId, "creator")
+        val client = okhttp3.OkHttpClient.Builder().addInterceptor { chain ->
+            assertEquals("vm.tiktok.com", chain.request().url.host)
+            okhttp3.Response.Builder().request(chain.request().newBuilder().url(canonical).build())
+                .protocol(okhttp3.Protocol.HTTP_1_1).code(200).message("OK").body("".toResponseBody()).build()
+        }.build()
+        assertEquals(canonical, TikTokUrlParser.resolveCanonicalUrl("https://vm.tiktok.com/fixture/", client))
     }
 }

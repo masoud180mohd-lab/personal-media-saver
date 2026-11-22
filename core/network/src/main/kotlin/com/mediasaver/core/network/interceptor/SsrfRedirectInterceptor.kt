@@ -1,79 +1,58 @@
 package com.mediasaver.core.network.interceptor
 
 import com.mediasaver.core.common.SecurityUtils
-import com.mediasaver.core.model.error.AppError
 import okhttp3.HttpUrl
 import okhttp3.Interceptor
 import okhttp3.Response
 import java.io.IOException
 
-/**
- * Interceptor enforcing strict network security policies:
- * 1. Blocks SSRF attacks by rejecting requests and redirects to private, loopback, or local IP spaces.
- * 2. Enforces a strict limit on HTTP redirection hops (max 5) to prevent redirection loops.
- * 3. Restricts request schemes strictly to HTTP and HTTPS.
- */
+/** Optional tighter destination constraint for requests to a single platform's public pages. */
+class PlatformWebDomain(private val domain: String) {
+    fun accepts(host: String) = host == domain || host.endsWith(".$domain")
+}
+
 class SsrfRedirectInterceptor(
     private val maxRedirects: Int = SecurityUtils.MAX_REDIRECT_HOPS
 ) : Interceptor {
-
-    @Throws(IOException::class)
     override fun intercept(chain: Interceptor.Chain): Response {
         var request = chain.request()
-        validateTargetUrl(request.url)
-
-        var redirectCount = 0
-        var response = chain.proceed(request)
-
-        while (response.isRedirect) {
-            redirectCount++
-            if (redirectCount > maxRedirects) {
-                response.close()
-                throw IOException("HTTP redirection loop detected: exceeded maximum limit of $maxRedirects hops")
-            }
-
+        val domain = request.tag(PlatformWebDomain::class.java)
+        var redirects = 0
+        while (true) {
+            validateTargetUrl(request.url, domain)
+            val response = chain.proceed(request)
             val location = response.header("Location")
-            if (location.isNullOrBlank()) {
-                break
-            }
+            if (!response.isRedirect || location.isNullOrBlank()) return response
 
-            val nextUrl = request.url.resolve(location)
-            if (nextUrl == null) {
-                response.close()
-                throw IOException("Invalid redirect location URI: $location")
-            }
-
-            // Strictly validate the redirected URL before sending any bytes
-            validateTargetUrl(nextUrl)
-
-            // Close the previous redirect response to free connection resources
+            // Only the terminal response belongs to the caller. Close before resolving,
+            // validating, or dispatching the next request, including on the hop limit.
+            val code = response.code
             response.close()
-
-            // Prepare next request, adhering to standard HTTP redirect semantics
-            val requestBuilder = request.newBuilder().url(nextUrl)
-            if (response.code == 301 || response.code == 302 || response.code == 303) {
-                requestBuilder.method("GET", null)
-                requestBuilder.removeHeader("Transfer-Encoding")
-                requestBuilder.removeHeader("Content-Length")
-                requestBuilder.removeHeader("Content-Type")
-            }
-
-            request = requestBuilder.build()
-            response = chain.proceed(request)
+            if (++redirects > maxRedirects) throw IOException("Redirect limit exceeded")
+            val previous = request.url
+            val next = previous.resolve(location) ?: throw IOException("Invalid redirect location")
+            request = request.newBuilder().url(next).apply {
+                if (previous.scheme != next.scheme || !previous.host.equals(next.host, ignoreCase = true) ||
+                    previous.port != next.port) {
+                    for (name in SENSITIVE_HEADERS) removeHeader(name)
+                }
+                if (code in 301..303 && request.method != "HEAD") {
+                    method("GET", null)
+                    removeHeader("Transfer-Encoding")
+                    removeHeader("Content-Length")
+                    removeHeader("Content-Type")
+                }
+            }.build()
         }
-
-        return response
     }
 
-    private fun validateTargetUrl(url: HttpUrl) {
-        val scheme = url.scheme.lowercase()
-        if (scheme != "http" && scheme != "https") {
-            throw IOException("Prohibited network protocol '$scheme'. Only HTTP and HTTPS are allowed.")
-        }
+    private fun validateTargetUrl(url: HttpUrl, domain: PlatformWebDomain?) {
+        if (!url.isHttps) throw IOException("HTTPS is required")
+        if (domain != null && !domain.accepts(url.host)) throw IOException("Outside platform domain")
+        if (SecurityUtils.isLocalOrPrivateIp(url.host)) throw IOException("Private or local address blocked")
+    }
 
-        val host = url.host
-        if (SecurityUtils.isLocalOrPrivateIp(host)) {
-            throw IOException("Access to private, local, or reserved network host '$host' is blocked by security policy.")
-        }
+    private companion object {
+        val SENSITIVE_HEADERS = listOf("Cookie", "Authorization", "Proxy-Authorization", "X-CSRFToken", "X-IG-App-ID")
     }
 }

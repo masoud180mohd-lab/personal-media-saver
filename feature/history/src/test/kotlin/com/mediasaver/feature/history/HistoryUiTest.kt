@@ -71,7 +71,7 @@ class HistoryUiTest {
         }
 
         composeTestRule.onNodeWithText("Completed Video Test").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Youtube").assertIsDisplayed()
+        composeTestRule.onNodeWithText("YouTube •", substring = true).assertIsDisplayed()
     }
 
     @Test
@@ -101,7 +101,8 @@ class HistoryUiTest {
             )
         }
 
-        composeTestRule.onNodeWithContentDescription("Delete item").performClick()
+        composeTestRule.onNodeWithContentDescription("Options").performClick()
+        composeTestRule.onNodeWithText("Delete").performClick()
         assertTrue(deleteRequested)
     }
 

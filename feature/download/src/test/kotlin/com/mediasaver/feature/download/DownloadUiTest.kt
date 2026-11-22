@@ -62,7 +62,7 @@ class DownloadUiTest {
         composeTestRule.onNodeWithText("Testing Video Download").assertIsDisplayed()
         composeTestRule.onNodeWithText("Downloading").assertIsDisplayed()
         // verify formatting
-        composeTestRule.onNodeWithText("500.0 B / 1000.0 B").assertIsDisplayed()
+        composeTestRule.onNodeWithText("500 B / 1000 B").assertIsDisplayed()
     }
 
     @Test
@@ -86,7 +86,7 @@ class DownloadUiTest {
             )
         }
 
-        composeTestRule.onNodeWithContentDescription("Cancel download").performClick()
+        composeTestRule.onNodeWithContentDescription("Cancel").performClick()
         assertTrue(cancelCalled)
     }
 
@@ -111,7 +111,7 @@ class DownloadUiTest {
             )
         }
 
-        composeTestRule.onNodeWithContentDescription("Retry download").performClick()
+        composeTestRule.onNodeWithContentDescription("Retry").performClick()
         assertTrue(retryCalled)
     }
 }

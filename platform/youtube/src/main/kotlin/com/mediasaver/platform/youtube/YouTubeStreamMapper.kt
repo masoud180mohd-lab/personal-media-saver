@@ -154,18 +154,14 @@ class YouTubeStreamMapper @Inject constructor() {
      * Parses numeric height from resolution string (e.g. "1080p60" -> 1080, "720p" -> 720).
      */
     fun parseHeight(resolution: String): Int {
-        val digits = resolution.takeWhile { it.isDigit() }
-        return digits.toIntOrNull() ?: when (resolution.lowercase()) {
+        return when (resolution.lowercase()) {
             "highest", "max", "4k" -> 2160
-            "1440p", "2k" -> 1440
-            "1080p", "fhd" -> 1080
-            "720p", "hd" -> 720
-            "480p", "sd" -> 480
-            "360p" -> 360
-            "240p" -> 240
-            "144p" -> 144
+            "2k" -> 1440
+            "fhd" -> 1080
+            "hd" -> 720
+            "sd" -> 480
             "lowest", "min" -> 144
-            else -> 720
+            else -> resolution.takeWhile { it.isDigit() }.toIntOrNull() ?: 720
         }
     }
 
