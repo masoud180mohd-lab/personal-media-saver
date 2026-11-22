@@ -55,6 +55,9 @@ import androidx.compose.foundation.border
 import androidx.compose.material.icons.rounded.PlayArrow
 import com.mediasaver.core.ui.theme.ThumbShape
 
+import androidx.compose.runtime.key
+import androidx.compose.runtime.rememberUpdatedState
+import com.mediasaver.core.model.isCarousel
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.pager.PagerDefaults
@@ -70,7 +73,8 @@ fun MediaPreviewCard(
     onActiveSlideChanged: (StreamInfo) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val isCarousel = availableStreams.size > 1 && availableStreams.all { it.quality?.startsWith("Slide ") == true }
+    val isCarousel = availableStreams.isCarousel()
+    val slideChanged = rememberUpdatedState(onActiveSlideChanged)
 
     Card(
         shape = CardShape,
@@ -93,11 +97,11 @@ fun MediaPreviewCard(
                     .aspectRatio(16f / 9f)
                     .clip(ThumbShape)
             ) {
-                if (isCarousel) {
+                if (isCarousel) key(mediaInfo.id, availableStreams) {
                     val pagerState = rememberPagerState { availableStreams.size }
                     LaunchedEffect(pagerState) {
                         snapshotFlow { pagerState.currentPage }.collect { page ->
-                            onActiveSlideChanged(availableStreams[page])
+                            availableStreams.getOrNull(page)?.let(slideChanged.value)
                         }
                     }
                     
@@ -113,10 +117,11 @@ fun MediaPreviewCard(
                             )
                         )
                     ) { page ->
-                        val stream = availableStreams[page]
+                        val stream = availableStreams.getOrNull(page) ?: return@HorizontalPager
                         SubcomposeAsyncImage(
                             model = ImageRequest.Builder(LocalContext.current)
-                                .data(stream.url) // Use the stream URL directly for the slide image/video frame
+                                .data(if (stream.mimeType?.startsWith("video/") == true || stream.format == "mp4")
+                                    stream.thumbnailUrl ?: mediaInfo.thumbnailUrl ?: stream.url else stream.url)
                                 .crossfade(true)
                                 .build(),
                             contentDescription = "Slide ${page + 1} of ${availableStreams.size}",

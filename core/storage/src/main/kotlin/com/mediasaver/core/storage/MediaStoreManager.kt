@@ -25,24 +25,28 @@ class MediaStoreManager @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
 
-    /**
-     * Saves a completed video file into the public Movies/MediaSaver directory.
-     *
-     * @param sourceFile The local completed file (e.g. in cache)
-     * @param fileName The target file name (will be sanitized)
-     * @param platform The originating platform
-     * @param mimeType Target MIME type (default: video/mp4)
-     * @return [Result] containing the final MediaStore URI
-     */
-    suspend fun saveVideo(
-        sourceFile: File,
-        fileName: String,
-        platform: PlatformId,
-        mimeType: String = "video/mp4"
-    ): Result<Uri> = withContext(Dispatchers.IO) {
+    suspend fun saveVideo(sourceFile: File, fileName: String, platform: PlatformId, mimeType: String = "video/mp4") =
+        save(sourceFile, fileName, platform, mimeType, "Movies", "mp4", if (Build.VERSION.SDK_INT >= 29)
+            MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY) else MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
+
+    suspend fun saveImage(sourceFile: File, fileName: String, platform: PlatformId, mimeType: String = "image/jpeg") =
+        save(sourceFile, fileName, platform, mimeType, "Pictures", "jpg", if (Build.VERSION.SDK_INT >= 29)
+            MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY) else MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
+
+    suspend fun saveAudio(sourceFile: File, fileName: String, platform: PlatformId, mimeType: String = "audio/mp4") =
+        save(sourceFile, fileName, platform, mimeType, "Music", "m4a", if (Build.VERSION.SDK_INT >= 29)
+            MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY) else MediaStore.Audio.Media.EXTERNAL_CONTENT_URI)
+
+    /** Roll back a new gallery entry if recording its completion fails. */
+    fun discard(uri: Uri) {
+        context.contentResolver.delete(uri, null, null)
+    }
+
+    private suspend fun save(sourceFile: File, fileName: String, platform: PlatformId, mimeType: String,
+        directory: String, defaultExtension: String, collectionUri: Uri): Result<Uri> = withContext(Dispatchers.IO) {
         runCatching {
             val fileObj = File(fileName)
-            val safeExt = SecurityUtils.normalizeExtension(fileObj.extension, defaultExtension = "mp4")
+            val safeExt = SecurityUtils.normalizeExtension(fileObj.extension, defaultExtension)
             val safeBaseName = FileNameSanitizer.sanitize(fileObj.nameWithoutExtension, fallback = "media")
             val sanitizedFileName = "$safeBaseName.$safeExt"
 
@@ -53,24 +57,18 @@ class MediaStoreManager @Inject constructor(
                 PlatformId.INSTAGRAM -> "Instagram"
                 PlatformId.UNKNOWN -> "Downloads"
             }
-            val relativePath = "Movies/MediaSaver/$platformFolder"
+            val relativePath = "$directory/MediaSaver/$platformFolder"
 
             val contentValues = ContentValues().apply {
-                put(MediaStore.Video.Media.DISPLAY_NAME, sanitizedFileName)
-                put(MediaStore.Video.Media.MIME_TYPE, mimeType)
+                put(MediaStore.MediaColumns.DISPLAY_NAME, sanitizedFileName)
+                put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    put(MediaStore.Video.Media.RELATIVE_PATH, relativePath)
-                    put(MediaStore.Video.Media.IS_PENDING, 1)
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
                 }
             }
 
             val resolver = context.contentResolver
-            val collectionUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-            } else {
-                MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-            }
-
             val itemUri = resolver.insert(collectionUri, contentValues)
                 ?: throw AppError.FileWriteFailed(cause = Exception("MediaStore insertion returned null URI"))
 
@@ -83,8 +81,8 @@ class MediaStoreManager @Inject constructor(
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     contentValues.clear()
-                    contentValues.put(MediaStore.Video.Media.IS_PENDING, 0)
-                    resolver.update(itemUri, contentValues, null, null)
+                    contentValues.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                    check(resolver.update(itemUri, contentValues, null, null) > 0) { "MediaStore publication failed" }
                 }
 
                 itemUri
@@ -95,65 +93,4 @@ class MediaStoreManager @Inject constructor(
         }
     }
 
-    /**
-     * Saves a completed image file into the public Pictures/MediaSaver directory.
-     */
-    suspend fun saveImage(
-        sourceFile: File,
-        fileName: String,
-        platform: PlatformId,
-        mimeType: String = "image/jpeg"
-    ): Result<Uri> = withContext(Dispatchers.IO) {
-        runCatching {
-            val fileObj = File(fileName)
-            val safeExt = SecurityUtils.normalizeExtension(fileObj.extension, defaultExtension = "jpg")
-            val safeBaseName = FileNameSanitizer.sanitize(fileObj.nameWithoutExtension, fallback = "media")
-            val sanitizedFileName = "$safeBaseName.$safeExt"
-
-            val platformFolder = when (platform) {
-                PlatformId.WHATSAPP -> "WhatsApp"
-                PlatformId.INSTAGRAM -> "Instagram"
-                else -> "Downloads"
-            }
-            val relativePath = "Pictures/MediaSaver/$platformFolder"
-
-            val contentValues = ContentValues().apply {
-                put(MediaStore.Images.Media.DISPLAY_NAME, sanitizedFileName)
-                put(MediaStore.Images.Media.MIME_TYPE, mimeType)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    put(MediaStore.Images.Media.RELATIVE_PATH, relativePath)
-                    put(MediaStore.Images.Media.IS_PENDING, 1)
-                }
-            }
-
-            val resolver = context.contentResolver
-            val collectionUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-            } else {
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-            }
-
-            val itemUri = resolver.insert(collectionUri, contentValues)
-                ?: throw AppError.FileWriteFailed(cause = Exception("MediaStore insertion returned null URI"))
-
-            try {
-                resolver.openOutputStream(itemUri)?.use { outStream ->
-                    sourceFile.inputStream().use { inStream ->
-                        inStream.copyTo(outStream)
-                    }
-                } ?: throw AppError.FileWriteFailed(cause = Exception("Could not open MediaStore output stream"))
-
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    contentValues.clear()
-                    contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
-                    resolver.update(itemUri, contentValues, null, null)
-                }
-
-                itemUri
-            } catch (e: Exception) {
-                resolver.delete(itemUri, null, null)
-                throw AppError.FileWriteFailed(cause = e)
-            }
-        }
-    }
 }

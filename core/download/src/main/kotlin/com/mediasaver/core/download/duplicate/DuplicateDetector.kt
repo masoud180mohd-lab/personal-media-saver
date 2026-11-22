@@ -19,7 +19,8 @@ enum class DuplicateReason {
 data class DuplicateCheckResult(
     val isDuplicate: Boolean,
     val existingTask: DownloadTask? = null,
-    val duplicateReason: DuplicateReason? = null
+    val duplicateReason: DuplicateReason? = null,
+    val fileHash: String? = null
 )
 
 /**
@@ -39,7 +40,7 @@ class DuplicateDetector @Inject constructor(
         mediaId: String
     ): DuplicateCheckResult {
         val existingByUrl = downloadDao.findByUrlAndPlatform(url, platform.name)
-        if (existingByUrl != null && (existingByUrl.status == "COMPLETED" || existingByUrl.status == "DOWNLOADING" || existingByUrl.status == "QUEUED" || existingByUrl.status == "MUXING")) {
+        if (existingByUrl != null && existingByUrl.mediaId == mediaId && eligible(existingByUrl)) {
             return DuplicateCheckResult(
                 isDuplicate = true,
                 existingTask = existingByUrl.toDomain(),
@@ -49,7 +50,7 @@ class DuplicateDetector @Inject constructor(
 
         if (mediaId.isNotBlank()) {
             val existingByMedia = downloadDao.findByMediaIdAndPlatform(mediaId, platform.name)
-            if (existingByMedia != null && (existingByMedia.status == "COMPLETED" || existingByMedia.status == "DOWNLOADING" || existingByMedia.status == "QUEUED" || existingByMedia.status == "MUXING")) {
+            if (existingByMedia != null && eligible(existingByMedia)) {
                 return DuplicateCheckResult(
                     isDuplicate = true,
                     existingTask = existingByMedia.toDomain(),
@@ -73,12 +74,14 @@ class DuplicateDetector @Inject constructor(
             return DuplicateCheckResult(
                 isDuplicate = true,
                 existingTask = existing.toDomain(),
-                duplicateReason = DuplicateReason.CONTENT_HASH_MATCH
+                fileHash = hash, duplicateReason = DuplicateReason.CONTENT_HASH_MATCH
             )
         }
 
-        return DuplicateCheckResult(isDuplicate = false)
+        return DuplicateCheckResult(isDuplicate = false, fileHash = hash)
     }
+
+    private fun eligible(row: DownloadEntity) = row.status in setOf("EXTRACTING", "QUEUED", "DOWNLOADING", "MUXING", "COMPLETED")
 
     private fun DownloadEntity.toDomain(): DownloadTask {
         return DownloadTask(

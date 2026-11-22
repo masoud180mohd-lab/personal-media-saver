@@ -1,5 +1,6 @@
 package com.mediasaver.platform.youtube
 
+import com.mediasaver.core.model.companionAudio
 import com.mediasaver.core.model.StreamInfo
 import com.mediasaver.platform.youtube.model.YouTubeDownloadPlan
 import org.schabi.newpipe.extractor.stream.AudioStream
@@ -106,7 +107,7 @@ class YouTubeStreamMapper @Inject constructor() {
 
         // 2. Look for adaptive video stream matching preferred quality
         val matchingAdaptiveVideo = findBestVideoStream(adaptiveVideoStreams, targetHeight)
-        val bestAudio = audioStreams.firstOrNull()
+        val bestAudio = matchingAdaptiveVideo?.companionAudio(audioStreams)
 
         if (matchingAdaptiveVideo != null && bestAudio != null) {
             return YouTubeDownloadPlan.Adaptive(
@@ -119,11 +120,6 @@ class YouTubeStreamMapper @Inject constructor() {
         val bestProgressive = progressiveStreams.maxByOrNull { parseHeight(it.quality.orEmpty()) }
         if (bestProgressive != null) {
             return YouTubeDownloadPlan.Progressive(bestProgressive)
-        }
-
-        // 4. Last resort: If only adaptive video exists without audio
-        if (matchingAdaptiveVideo != null) {
-            return YouTubeDownloadPlan.Progressive(matchingAdaptiveVideo)
         }
 
         return null

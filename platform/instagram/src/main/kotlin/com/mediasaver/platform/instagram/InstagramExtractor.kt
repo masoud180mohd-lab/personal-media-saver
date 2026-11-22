@@ -1,6 +1,9 @@
 package com.mediasaver.platform.instagram
 
-import android.util.Log
+import org.json.JSONArray
+import org.json.JSONObject
+import org.json.JSONTokener
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import com.mediasaver.core.model.PlatformId
 import com.mediasaver.core.model.error.AppError
 import kotlinx.coroutines.Dispatchers
@@ -9,7 +12,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import com.mediasaver.core.network.interceptor.PlatformWebDomain
 import java.io.IOException
-import java.net.URLDecoder
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -19,7 +21,8 @@ import javax.inject.Singleton
 data class InstagramCarouselItem(
     val videoUrl: String?,
     val imageUrl: String?,
-    val isVideo: Boolean
+    val isVideo: Boolean,
+    val mediaIndex: Int
 )
 
 /**
@@ -34,6 +37,7 @@ data class InstagramMediaDetails(
     val imageUrl: String?,
     val isVideo: Boolean,
     val durationSeconds: Int? = null,
+    val isDegradedPreview: Boolean = false,
     val carouselItems: List<InstagramCarouselItem> = emptyList()
 )
 
@@ -56,445 +60,215 @@ class InstagramExtractor @Inject constructor(
             "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
         private const val IG_APP_ID = "936619743392459"
         private const val PUBLIC_RESTRICTION = "Instagram has restricted public access to this post. Try another public link."
-        private const val TAG = "MediaSaver_IgAdapter"
     }
 
-    /**
-     * Extracts media information for a given shortcode.
-     */
-    suspend fun extract(shortcode: String): Result<InstagramMediaDetails> = withContext(Dispatchers.IO) {
-        // Tier 1: Public Embed Page
-        val embedResult = extractFromEmbedPage(shortcode)
-        if (embedResult.isSuccess) {
-            Log.d(TAG, "Tier 1 (Public Embed) SUCCESS")
-            return@withContext embedResult
+    suspend fun extract(shortcode: String, expectVideo: Boolean = false): Result<InstagramMediaDetails> =
+        withContext(Dispatchers.IO) {
+            val post = if (expectVideo) InstagramUrlParser.buildCanonicalReelUrl(shortcode)
+                else InstagramUrlParser.buildCanonicalPostUrl(shortcode)
+            val urls = listOf(InstagramUrlParser.buildEmbedUrl(shortcode), post, InstagramUrlParser.buildApiUrl(shortcode))
+            var restricted: AppError.ContentRestricted? = null
+            var last: Throwable? = null
+            var preview: InstagramMediaDetails? = null
+            for ((tier, url) in urls.withIndex()) {
+                val result = fetch(url, tier, shortcode)
+                val found = result.getOrNull()
+                val media = if (expectVideo && found != null && found.carouselItems.isNotEmpty()) {
+                    val playable = found.carouselItems.filter { it.videoUrl != null }
+                    playable.firstOrNull()?.let { found.copy(videoUrl = it.videoUrl, imageUrl = it.imageUrl,
+                        thumbnailUrl = it.imageUrl, isVideo = true, carouselItems = playable) }
+                } else found
+                if (media != null && (!expectVideo || media.videoUrl != null)) {
+                    if (!media.isDegradedPreview) return@withContext Result.success(media)
+                    preview = media
+                }
+                val error = result.exceptionOrNull()
+                if (error is AppError.ContentRestricted) restricted = error
+                if (error is AppError.DownloadFailed && error.httpCode == 429) return@withContext result
+                if (error != null) last = error
+            }
+            if (!expectVideo && preview != null) return@withContext Result.success(preview)
+            Result.failure(restricted ?: if (expectVideo) AppError.ExtractionFailed(PlatformId.INSTAGRAM,
+                userMessage = "No playable public video stream was found for this Reel.")
+                else last ?: AppError.ExtractionFailed(PlatformId.INSTAGRAM))
         }
 
-        // Tier 2: Public Post HTML
-        val postHtmlResult = extractFromPostHtml(shortcode)
-        if (postHtmlResult.isSuccess) {
-            Log.d(TAG, "Tier 2 (Public HTML) SUCCESS")
-            return@withContext postHtmlResult
-        }
-
-        // Tier 3: Public Web API
-        val webApiResult = extractFromWebApi(shortcode)
-        if (webApiResult.isSuccess) {
-            Log.d(TAG, "Tier 3 (Public WebApi) SUCCESS")
-            return@withContext webApiResult
-        }
-
-        val failures = listOf(embedResult, postHtmlResult, webApiResult).mapNotNull { it.exceptionOrNull() }
-        val restriction = failures.filterIsInstance<AppError.ContentRestricted>().firstOrNull()
-        Result.failure(restriction ?: failures.last())
-    }
-
-    /**
-     * Tier 1: Extracts media from the public/embed endpoint:
-     * https://www.instagram.com/p/{shortcode}/embed/captioned/
-     */
-    internal fun extractFromEmbedPage(shortcode: String): Result<InstagramMediaDetails> {
-        val embedUrl = InstagramUrlParser.buildEmbedUrl(shortcode)
-        val requestBuilder = Request.Builder()
-            .url(embedUrl)
-            .tag(PlatformWebDomain::class.java, PlatformWebDomain("instagram.com"))
-            .header("User-Agent", USER_AGENT)
-            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-            .header("Accept-Language", "en-US,en;q=0.9")
-            .header("Referer", "https://www.instagram.com/")
-
+    private fun fetch(url: String, tier: Int, code: String): Result<InstagramMediaDetails> {
+        val request = Request.Builder().url(url).tag(PlatformWebDomain::class.java, PlatformWebDomain("instagram.com"))
+            .header("User-Agent", USER_AGENT).header("Referer", "https://www.instagram.com/")
+            .apply { if (tier == 2) header("X-IG-App-ID", IG_APP_ID) }.build()
         return try {
-            val response = okHttpClient.newCall(requestBuilder.build()).execute()
-            response.use { res ->
-                if (res.code == 404) {
-                    return Result.failure(AppError.MediaNotFound(embedUrl))
+            okHttpClient.newCall(request).execute().use { response ->
+                when {
+                    response.code == 401 || response.code == 403 ||
+                        response.request.url.pathSegments.any { it in setOf("login", "challenge") } -> restricted()
+                    response.code == 404 -> Result.failure(AppError.MediaNotFound(url))
+                    !response.isSuccessful -> Result.failure(AppError.DownloadFailed(response.code))
+                    else -> {
+                        val body = response.body?.string().orEmpty()
+                        when (tier) {
+                            0 -> parseEmbedHtml(code, body)
+                            1 -> parsePostHtml(code, body)
+                            else -> parseApiResponseJson(code, body)
+                        }
+                    }
                 }
-
-                if (res.code == 401 || res.code == 403) {
-                    return Result.failure(AppError.ContentRestricted(PUBLIC_RESTRICTION))
-                }
-                val finalUrl = res.request.url.toString()
-                if (finalUrl.contains("/accounts/login/") || finalUrl.contains("/challenge/")) {
-                    return Result.failure(AppError.ContentRestricted(PUBLIC_RESTRICTION))
-                }
-
-                val html = res.body?.string().orEmpty()
-                parseEmbedHtml(shortcode, html)
             }
         } catch (e: IOException) {
             Result.failure(AppError.NetworkError(e))
-        } catch (e: Exception) {
-            Result.failure(AppError.ExtractionFailed(PlatformId.INSTAGRAM, e))
         }
     }
 
-    /**
-     * Parses embed page HTML.
-     */
-    internal fun parseEmbedHtml(shortcode: String, html: String): Result<InstagramMediaDetails> {
-        if (html.isBlank()) {
-            return Result.failure(AppError.ExtractionFailed(PlatformId.INSTAGRAM))
+    private fun restricted() = Result.failure<InstagramMediaDetails>(AppError.ContentRestricted(PUBLIC_RESTRICTION))
+    private fun unavailable() = Result.failure<InstagramMediaDetails>(AppError.ExtractionFailed(PlatformId.INSTAGRAM))
+
+    internal fun parseEmbedHtml(code: String, html: String) = parseHtml(code, html, true)
+    internal fun parsePostHtml(code: String, html: String) = parseHtml(code, html, false)
+
+    private val scripts = Regex("""<script\b([^>]*)>(.*?)</script\s*>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+    private val tags = Regex("""<(meta|img|video)\b[^>]*>""", RegexOption.IGNORE_CASE)
+    private val attributes = Regex("""([\w:-]+)\s*=\s*(["'])(.*?)\2""", RegexOption.DOT_MATCHES_ALL)
+
+    private fun parseHtml(code: String, html: String, embed: Boolean): Result<InstagramMediaDetails> {
+        if ("Login &bull; Instagram" in html || "checkpoint_required" in html) return restricted()
+        val meta = mutableMapOf<String, String>()
+        var embeddedImage: String? = null
+        var embeddedVideo: String? = null
+        for (tag in tags.findAll(html)) {
+            val attrs = attributes.findAll(tag.value).associate { it.groupValues[1].lowercase() to it.groupValues[3] }
+            val classes = attrs["class"].orEmpty().split(Regex("""\s+"""))
+            when {
+                tag.groupValues[1].equals("meta", true) -> attrs["property"]?.let { meta[it] = attrs["content"].orEmpty() }
+                "EmbeddedMediaVideo" in classes -> embeddedVideo = videoUrl(attrs["src"])
+                "EmbeddedMediaImage" in classes -> embeddedImage = cleanUrl(attrs["src"])
+            }
         }
-
-        if (html.contains("Login &bull; Instagram") || html.contains("accounts/login") || html.contains("checkpoint_required")) {
-            return Result.failure(AppError.ContentRestricted(PUBLIC_RESTRICTION))
+        fun visibleText(className: String) = Regex("""<[^>]+class=["'][^"']*$className[^"']*["'][^>]*>(.*?)</(?:div|a)>""",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)).find(html)?.groupValues?.get(1)
+            ?.replace(Regex("<[^>]*>"), "")?.let(::unescapeHtmlEntities)?.trim()?.ifBlank { null }
+        val title = (meta["og:title"] ?: meta["og:description"])?.let(::unescapeHtmlEntities) ?: visibleText("Caption")
+        val author = visibleText("Username") ?: title?.takeIf { "on Instagram:" in it }?.substringBefore("on Instagram:")?.trim()
+        val sidecarShell = listOf("edge_sidecar_to_children", "carousel_media", "GraphSidecar", "EmbedSidecar").any { it in html }
+        for (script in scripts.findAll(html)) {
+            val body = script.groupValues[2].trim()
+            val start = when {
+                body.startsWith("{") || body.startsWith("[") -> 0
+                "__additionalDataLoaded" in body || "_sharedData" in body -> body.indexOf('{')
+                else -> -1
+            }
+            if (start < 0) continue
+            val json = decode(body.substring(start)) ?: continue
+            val media = findMedia(json, code) ?: continue
+            if (sidecarShell && media.carouselItems.isEmpty()) continue
+            return Result.success(media.copy(title = media.title ?: title, author = media.author ?: author))
         }
-
-        // 1. Direct Video Tag or embedded video URL
-        val videoUrlMatch = Regex("""<video[^>]+class="[^"]*EmbeddedMediaVideo[^"]*"[^>]+src="([^"]+)"""", RegexOption.IGNORE_CASE).find(html)
-            ?: Regex("""<video[^>]+src="([^"]+)"""", RegexOption.IGNORE_CASE).find(html)
-            ?: Regex("""["']video_url["']\s*:\s*["']([^"']+)["']""").find(html)
-            ?: Regex(""""url"\s*:\s*"(https?:\\/\\/[^"]+\.mp4[^"]*)"""").find(html)
-            ?: Regex(""""url"\s*:\s*"(https?://[^"]+\.mp4[^"]*)"""").find(html)
-            ?: Regex("""(https?:\\/\\/[^"'<>\s]+\.mp4[^"'<>\s]*)""").find(html)
-            ?: Regex("""(https?://[^"'<>\s]+\.mp4[^"'<>\s]*)""").find(html)
-
-        val videoUrl = videoUrlMatch?.groupValues?.getOrNull(1)?.let { sanitizeUrl(it) }?.takeIf { !it.startsWith("data:") }
-
-        // 2. Direct Image / Thumbnail Tag
-        val imgMatch = Regex("""<img[^>]+class="[^"]*EmbeddedMediaImage[^"]*"[^>]+src="([^"]+)"""", RegexOption.IGNORE_CASE).find(html)
-            ?: Regex("""<img[^>]+src="([^"]+)"""", RegexOption.IGNORE_CASE).find(html)
-            ?: Regex("""["']display_url["']\s*:\s*["']([^"']+)["']""").find(html)
-            ?: Regex(""""url"\s*:\s*"(https?:\\/\\/[^"]+(?:scontent|cdninstagram)[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"""").find(html)
-
-        val imageUrl = imgMatch?.groupValues?.getOrNull(1)?.let { sanitizeUrl(it) }?.takeIf { !it.startsWith("data:") }
-
-        // 3. Caption / Title
-        val captionMatch = Regex("""<div[^>]+class="[^"]*Caption[^"]*"[^>]*>(.*?)</div>""", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)).find(html)
-            ?: Regex("""<div[^>]+class="[^"]*CaptionText[^"]*"[^>]*>(.*?)</div>""", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)).find(html)
-
-        val rawCaption = captionMatch?.groupValues?.getOrNull(1)
-        val title = rawCaption?.let { stripHtmlTags(it) }?.take(150)?.ifBlank { null }
-
-        // 4. Author / Username
-        val authorMatch = Regex("""<a[^>]+class="[^"]*Username[^"]*"[^>]*>(.*?)</a>""", RegexOption.IGNORE_CASE).find(html)
-            ?: Regex("""<a[^>]+class="[^"]*Avatar[^"]*"[^>]+href="[/\\]*([^/"\\]+)""", RegexOption.IGNORE_CASE).find(html)
-            ?: Regex("""["']username["']\s*:\s*["']([^"']+)["']""").find(html)
-
-        val author = authorMatch?.groupValues?.getOrNull(1)?.let { stripHtmlTags(it).trim() }?.ifBlank { null }
-
-        val isVideo = !videoUrl.isNullOrBlank()
-        if (!isVideo && imageUrl.isNullOrBlank()) {
-            return Result.failure(AppError.ExtractionFailed(PlatformId.INSTAGRAM))
-        }
-
-        return Result.success(
-            InstagramMediaDetails(
-                id = shortcode,
-                title = title ?: (if (isVideo) "Instagram Reel ($shortcode)" else "Instagram Post ($shortcode)"),
-                author = author,
-                thumbnailUrl = imageUrl ?: videoUrl,
-                videoUrl = videoUrl,
-                imageUrl = imageUrl,
-                isVideo = isVideo,
-                durationSeconds = null
-            )
-        )
+        // A sidecar or video shell is not a complete single-photo post.
+        if (sidecarShell) return unavailable()
+        val video = embeddedVideo ?: if (!embed) videoUrl(meta["og:video:secure_url"] ?: meta["og:video"]) else null
+        val image = embeddedImage ?: if (!embed) cleanUrl(meta["og:image"]) else null
+        if ("accounts/login" in html && video == null && embeddedImage == null) return restricted()
+        val videoShell = "GraphVideo" in html || "EmbeddedMediaVideo" in html || "video_versions" in html ||
+            Regex("""["']is_video["']\s*:\s*true""").containsMatchIn(html)
+        if (video == null && (image == null || videoShell)) return unavailable()
+        return Result.success(InstagramMediaDetails(code, title ?: "Instagram post ($code)", author, image, video, image, video != null,
+            isDegradedPreview = video == null))
     }
 
-    /**
-     * Tier 2: Canonical Post or Reel HTML page via OpenGraph tags.
-     */
-    internal fun extractFromPostHtml(shortcode: String): Result<InstagramMediaDetails> {
-        val postUrl = InstagramUrlParser.buildCanonicalPostUrl(shortcode)
-        val requestBuilder = Request.Builder()
-            .url(postUrl)
-            .tag(PlatformWebDomain::class.java, PlatformWebDomain("instagram.com"))
-            .header("User-Agent", USER_AGENT)
-            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-            .header("Accept-Language", "en-US,en;q=0.9")
+    private fun decode(text: String): Any? = try {
+        JSONTokener(text).nextValue()
+    } catch (_: org.json.JSONException) { null }
 
-        return try {
-            val response = okHttpClient.newCall(requestBuilder.build()).execute()
-            response.use { res ->
-                if (res.code == 404) {
-                    return Result.failure(AppError.MediaNotFound(postUrl))
-                }
-
-                if (res.code == 401 || res.code == 403) {
-                    return Result.failure(AppError.ContentRestricted(PUBLIC_RESTRICTION))
-                }
-                val finalUrl = res.request.url.toString()
-                if (finalUrl.contains("/accounts/login/")) {
-                    return Result.failure(AppError.ContentRestricted(PUBLIC_RESTRICTION))
-                }
-
-                val html = res.body?.string().orEmpty()
-                parsePostHtml(shortcode, html)
-            }
-        } catch (e: IOException) {
-            Result.failure(AppError.NetworkError(e))
-        } catch (e: Exception) {
-            Result.failure(AppError.ExtractionFailed(PlatformId.INSTAGRAM, e))
-        }
+    internal fun parseApiResponseJson(code: String, json: String): Result<InstagramMediaDetails> {
+        val root = decode(json)
+        if (root is JSONObject && (root.optString("message") == "login_required" || root.optBoolean("require_login"))) return restricted()
+        return findMedia(root, code)?.let { Result.success(it) } ?: unavailable()
     }
 
-    /**
-     * Parses post HTML for OpenGraph meta tags, embedded scripts, and JSON-LD data.
-     */
-    internal fun parsePostHtml(shortcode: String, html: String): Result<InstagramMediaDetails> {
-        if (html.isBlank()) {
-            return Result.failure(AppError.ExtractionFailed(PlatformId.INSTAGRAM))
+    private fun findMedia(value: Any?, code: String, depth: Int = 0): InstagramMediaDetails? {
+        if (depth > 48) return null
+        if (value is JSONArray) {
+            for (i in 0 until value.length()) findMedia(value.opt(i), code, depth + 1)?.let { return it }
         }
-
-        if (html.contains("Login &bull; Instagram") || html.contains("accounts/login")) {
-            return Result.failure(AppError.ContentRestricted(PUBLIC_RESTRICTION))
-        }
-
-        // OpenGraph Video
-        val ogVideo = Regex("""<meta[^>]+property=["']og:video["'][^>]+content=["']([^"']+)["']""", RegexOption.IGNORE_CASE).find(html)
-            ?: Regex("""<meta[^>]+property=["']og:video:secure_url["'][^>]+content=["']([^"']+)["']""", RegexOption.IGNORE_CASE).find(html)
-            ?: Regex("""<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:video["']""", RegexOption.IGNORE_CASE).find(html)
-            ?: Regex("""["']video_url["']\s*:\s*["']([^"']+)["']""").find(html)
-            ?: Regex(""""url"\s*:\s*"(https?:\\/\\/[^"]+\.mp4[^"]*)"""").find(html)
-            ?: Regex(""""url"\s*:\s*"(https?://[^"]+\.mp4[^"]*)"""").find(html)
-            ?: Regex("""(https?:\\/\\/[^"'<>\s]+\.mp4[^"'<>\s]*)""").find(html)
-            ?: Regex("""(https?://[^"'<>\s]+\.mp4[^"'<>\s]*)""").find(html)
-
-        val videoUrl = ogVideo?.groupValues?.getOrNull(1)?.let { sanitizeUrl(it) }?.takeIf { !it.startsWith("data:") }
-
-        // OpenGraph Image
-        val ogImage = Regex("""<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']""", RegexOption.IGNORE_CASE).find(html)
-            ?: Regex("""<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']""", RegexOption.IGNORE_CASE).find(html)
-            ?: Regex("""["']display_url["']\s*:\s*["']([^"']+)["']""").find(html)
-
-        val imageUrl = ogImage?.groupValues?.getOrNull(1)?.let { sanitizeUrl(it) }?.takeIf { !it.startsWith("data:") }
-
-        // OpenGraph Title & Description
-        val ogTitle = Regex("""<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']""", RegexOption.IGNORE_CASE).find(html)
-        val ogDesc = Regex("""<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)["']""", RegexOption.IGNORE_CASE).find(html)
-
-        val rawTitle = ogTitle?.groupValues?.getOrNull(1) ?: ogDesc?.groupValues?.getOrNull(1)
-        val title = rawTitle?.let { stripHtmlTags(it) }?.take(150)?.ifBlank { null }
-
-        val author = ogTitle?.groupValues?.getOrNull(1)?.let {
-            if (it.contains("on Instagram:")) {
-                it.substringBefore("on Instagram:").trim().removePrefix("@")
-            } else {
-                null
+        if (value !is JSONObject) return null
+        val identifier = value.optString("shortcode", value.optString("code"))
+        if (identifier.isNotEmpty() && identifier != code) return null
+        val sidecar = value.optJSONObject("edge_sidecar_to_children")
+        val children = sidecar?.optJSONArray("edges") ?: value.optJSONArray("carousel_media")
+        if (children != null) {
+            val slides = mutableListOf<InstagramCarouselItem>()
+            val count = sidecar?.optInt("count", children.length()) ?: value.optInt("carousel_media_count", children.length())
+            if (children.length() == 0 || count > children.length() ||
+                sidecar?.optJSONObject("page_info")?.optBoolean("has_next_page") == true) return null
+            for (index in 0 until children.length()) {
+                val entry = children.optJSONObject(index) ?: return null
+                val node = if (sidecar != null) entry.optJSONObject("node") ?: return null else entry
+                slides += slide(node, index) ?: return null
             }
+            return details(code, value, slides.first(), slides)
         }
-
-        val isVideo = !videoUrl.isNullOrBlank()
-        if (!isVideo && imageUrl.isNullOrBlank()) {
-            return Result.failure(AppError.ExtractionFailed(PlatformId.INSTAGRAM))
+        if (value.has("carousel_media") || sidecar != null || value.optString("__typename") == "GraphSidecar") return null
+        slide(value, 0)?.let { return details(code, value, it, emptyList()) }
+        // Payload wrappers vary. Never interpret a nested user's avatar or recommended media as the post.
+        for (key in value.keys()) {
+            if (key in setOf("user", "owner", "recommendations", "related_media")) continue
+            val child = value.opt(key)
+            val wrapped = if (child is String && key in setOf("gql_data", "data", "shortcode_media", "xdt_shortcode_media") &&
+                child.trimStart().startsWith('{')) decode(child) else child
+            findMedia(wrapped, code, depth + 1)?.let { return it }
         }
-
-        // Robust carousel parsing for V1.1.1
-        val carouselItems = mutableListOf<InstagramCarouselItem>()
-        
-        // 1. Try to extract sidecar arrays
-        var sidecarJson: String? = null
-        val sidecarIndex = html.indexOf("\"edge_sidecar_to_children\"")
-        val carouselMediaIndex = html.indexOf("\"carousel_media\"")
-        
-        if (sidecarIndex != -1) {
-            val scriptEnd = html.indexOf("</script>", sidecarIndex)
-            if (scriptEnd != -1) {
-                sidecarJson = html.substring(sidecarIndex, scriptEnd)
-            }
-        } else if (carouselMediaIndex != -1) {
-            val scriptEnd = html.indexOf("</script>", carouselMediaIndex)
-            if (scriptEnd != -1) {
-                sidecarJson = html.substring(carouselMediaIndex, scriptEnd)
-            }
-        }
-            
-        if (sidecarJson != null) {
-            val nodes = sidecarJson.split(Regex("""\{\s*"node"\s*:|(?=\{\s*"id"\s*:)"""))
-            for (node in nodes) {
-                val vMatch = Regex("""["']video_url["']\s*:\s*["']([^"']+)["']""").find(node)
-                val iMatch = Regex("""["']display_url["']\s*:\s*["']([^"']+)["']""").find(node)
-                val vUrl = vMatch?.groupValues?.getOrNull(1)?.let { sanitizeUrl(it) }?.takeIf { !it.startsWith("data:") }
-                val iUrl = iMatch?.groupValues?.getOrNull(1)?.let { sanitizeUrl(it) }?.takeIf { !it.startsWith("data:") }
-                if (vUrl != null || iUrl != null) {
-                    carouselItems.add(InstagramCarouselItem(vUrl, iUrl, vUrl != null || iUrl?.contains(".mp4") == true))
-                }
-            }
-        }
-        
-        // 2. Fallback: permissive regex matching without brace constraints
-        if (carouselItems.isEmpty()) {
-            val matches = Regex("""(["'])(video_url|display_url)\1\s*:\s*(["'])([^"']+)\3""").findAll(html)
-            for (match in matches) {
-                val key = match.groupValues[2]
-                val url = sanitizeUrl(match.groupValues[4]).takeIf { !it.startsWith("data:") } ?: continue
-                val isVid = key == "video_url" || url.contains(".mp4")
-                if (isVid) {
-                    carouselItems.add(InstagramCarouselItem(videoUrl = url, imageUrl = null, isVideo = true))
-                } else {
-                    carouselItems.add(InstagramCarouselItem(videoUrl = null, imageUrl = url, isVideo = false))
-                }
-            }
-        }
-        
-        val distinctCarouselItems = carouselItems.distinctBy { it.videoUrl ?: it.imageUrl }
-            .toMutableList()
-            
-        if (distinctCarouselItems.isNotEmpty()) {
-            val hasMain = distinctCarouselItems.any { it.videoUrl == videoUrl || (it.imageUrl == imageUrl && imageUrl != null) }
-            if (!hasMain && (videoUrl != null || imageUrl != null)) {
-                distinctCarouselItems.add(0, InstagramCarouselItem(videoUrl, imageUrl, isVideo))
-            }
-        }
-
-        return Result.success(
-            InstagramMediaDetails(
-                id = shortcode,
-                title = title ?: (if (isVideo) "Instagram Reel ($shortcode)" else "Instagram Post ($shortcode)"),
-                author = author,
-                thumbnailUrl = imageUrl ?: videoUrl,
-                videoUrl = videoUrl,
-                imageUrl = imageUrl,
-                isVideo = isVideo,
-                durationSeconds = null,
-                carouselItems = distinctCarouselItems
-            )
-        )
+        return null
     }
 
-    /**
-     * Tier 3: Queries Instagram Web API endpoint (?__a=1&__d=dis).
-     */
-    internal fun extractFromWebApi(shortcode: String): Result<InstagramMediaDetails> {
-        val apiUrl = InstagramUrlParser.buildApiUrl(shortcode)
-        val requestBuilder = Request.Builder()
-            .url(apiUrl)
-            .tag(PlatformWebDomain::class.java, PlatformWebDomain("instagram.com"))
-            .header("User-Agent", USER_AGENT)
-            .header("X-IG-App-ID", IG_APP_ID)
-            .header("X-Requested-With", "XMLHttpRequest")
-            .header("Accept", "*/*")
-            .header("Referer", "https://www.instagram.com/p/$shortcode/")
+    private fun details(code: String, obj: JSONObject, item: InstagramCarouselItem, slides: List<InstagramCarouselItem>) =
+        InstagramMediaDetails(code, obj.optJSONObject("caption")?.optString("text")
+            ?: obj.optJSONObject("edge_media_to_caption")?.optJSONArray("edges")?.optJSONObject(0)?.optJSONObject("node")?.optString("text")
+            ?: obj.optString("name").ifBlank { null },
+            (obj.optJSONObject("owner") ?: obj.optJSONObject("user"))?.optString("username"), item.imageUrl,
+            item.videoUrl, item.imageUrl, item.isVideo, carouselItems = slides)
 
-        return try {
-            val response = okHttpClient.newCall(requestBuilder.build()).execute()
-            response.use { res ->
-                if (res.code == 404) {
-                    return Result.failure(AppError.MediaNotFound(apiUrl))
-                }
-                if (res.code == 401 || res.code == 403) {
-                    return Result.failure(AppError.ContentRestricted(PUBLIC_RESTRICTION))
-                }
-
-                val json = res.body?.string().orEmpty()
-                parseApiResponseJson(shortcode, json)
-            }
-        } catch (e: IOException) {
-            Result.failure(AppError.NetworkError(e))
-        } catch (e: Exception) {
-            Result.failure(AppError.ExtractionFailed(PlatformId.INSTAGRAM, e))
-        }
+    private fun slide(obj: JSONObject, index: Int): InstagramCarouselItem? {
+        val ldType = obj.optString("@type")
+        val video = best(obj.optJSONArray("video_versions"), true) ?: videoUrl(obj.optString("video_url")) ?:
+            if (ldType == "VideoObject") videoUrl(obj.optString("contentUrl")) else null
+        val image = best(obj.optJSONObject("image_versions2")?.optJSONArray("candidates"), false)
+            ?: best(obj.optJSONArray("display_resources"), false) ?: cleanUrl(obj.optString("display_url"))
+            ?: if (ldType == "ImageObject") cleanUrl(obj.optString("contentUrl")) else cleanUrl(obj.optString("thumbnailUrl")).takeIf { video != null }
+        val needsVideo = obj.optBoolean("is_video") || obj.optInt("media_type") == 2 || obj.has("video_versions") || ldType == "VideoObject"
+        if (video == null && (needsVideo || image == null)) return null
+        return InstagramCarouselItem(video, image, video != null, index)
     }
 
-    /**
-     * Parses JSON response from the public web API.
-     */
-    internal fun parseApiResponseJson(shortcode: String, json: String): Result<InstagramMediaDetails> {
-        if (json.isBlank() || json.startsWith("<!DOCTYPE") || json.startsWith("<html")) {
-            return Result.failure(AppError.ExtractionFailed(PlatformId.INSTAGRAM))
+    private fun best(array: JSONArray?, video: Boolean): String? {
+        if (array == null) return null
+        var size = -1L
+        var result: String? = null
+        for (i in 0 until array.length()) {
+            val candidate = array.optJSONObject(i) ?: continue
+            val mime = candidate.optString("mime_type").substringBefore(';')
+            if (video && mime.isNotBlank() && !mime.equals("video/mp4", ignoreCase = true)) continue
+            val raw = candidate.optString("url", candidate.optString("src"))
+            val url = (if (video) videoUrl(raw) else cleanUrl(raw)) ?: continue
+            val area = candidate.optInt("width", candidate.optInt("config_width")).toLong() *
+                candidate.optInt("height", candidate.optInt("config_height"))
+            if (area > size) { size = area; result = url }
         }
-
-        if (json.contains("\"message\":\"login_required\"") || json.contains("\"status\":\"fail\"")) {
-            return Result.failure(AppError.ContentRestricted(PUBLIC_RESTRICTION))
-        }
-
-        // Extract video URL (handles single video, video_versions array, sidecar, etc.)
-        val videoMatch = Regex(""""url"\s*:\s*"(https?:\\/\\/[^"]+\.mp4[^"]*)"""").find(json)
-            ?: Regex(""""url"\s*:\s*"(https?://[^"]+\.mp4[^"]*)"""").find(json)
-            ?: Regex("""["']video_url["']\s*:\s*["']([^"']+)["']""").find(json)
-            ?: Regex("""(https?:\\/\\/[^"'<>\s]+\.mp4[^"'<>\s]*)""").find(json)
-            ?: Regex("""(https?://[^"'<>\s]+\.mp4[^"'<>\s]*)""").find(json)
-
-        val videoUrl = videoMatch?.groupValues?.getOrNull(1)?.let { sanitizeUrl(it) }?.takeIf { !it.startsWith("data:") }
-
-        // Extract display_url / image / thumbnail
-        val imageMatch = Regex(""""url"\s*:\s*"(https?:\\/\\/[^"]+(?:scontent|cdninstagram)[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"""").find(json)
-            ?: Regex(""""url"\s*:\s*"(https?://[^"]+(?:scontent|cdninstagram)[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"""").find(json)
-            ?: Regex("""["']display_url["']\s*:\s*["']([^"']+)["']""").find(json)
-            ?: Regex("""["']thumbnail_src["']\s*:\s*["']([^"']+)["']""").find(json)
-
-        val imageUrl = imageMatch?.groupValues?.getOrNull(1)?.let { sanitizeUrl(it) }?.takeIf { !it.startsWith("data:") }
-
-        // Extract caption text
-        val captionMatch = Regex(""""text"\s*:\s*"([^"]{1,500})"""").find(json)
-        val title = captionMatch?.groupValues?.getOrNull(1)?.let { unescapeJsonString(it) }?.take(150)
-
-        // Extract username
-        val usernameMatch = Regex(""""username"\s*:\s*"([^"]+)"""").find(json)
-        val author = usernameMatch?.groupValues?.getOrNull(1)
-
-        val isVideo = !videoUrl.isNullOrBlank()
-        if (!isVideo && imageUrl.isNullOrBlank()) {
-            return Result.failure(AppError.ExtractionFailed(PlatformId.INSTAGRAM))
-        }
-
-        val carouselItems = mutableListOf<InstagramCarouselItem>()
-        
-        // 1. Try to extract sidecar arrays
-        val sidecarMatch = Regex(""""edge_sidecar_to_children"\s*:\s*\{"edges"\s*:\s*\[(.*?)\]\}\}\]""", RegexOption.DOT_MATCHES_ALL).find(json) 
-            ?: Regex(""""carousel_media"\s*:\s*\[(.*?)\]""", RegexOption.DOT_MATCHES_ALL).find(json)
-            
-        if (sidecarMatch != null) {
-            val sidecarJson = sidecarMatch.groupValues[1]
-            val nodes = sidecarJson.split(Regex("""\{"node"\s*:|(?=\{"id"\s*:)"""))
-            for (node in nodes) {
-                val vMatch = Regex("""["']video_url["']\s*:\s*["']([^"']+)["']""").find(node)
-                val iMatch = Regex("""["']display_url["']\s*:\s*["']([^"']+)["']""").find(node)
-                val vUrl = vMatch?.groupValues?.getOrNull(1)?.let { sanitizeUrl(it) }?.takeIf { !it.startsWith("data:") }
-                val iUrl = iMatch?.groupValues?.getOrNull(1)?.let { sanitizeUrl(it) }?.takeIf { !it.startsWith("data:") }
-                if (vUrl != null || iUrl != null) {
-                    carouselItems.add(InstagramCarouselItem(vUrl, iUrl, vUrl != null || iUrl?.contains(".mp4") == true))
-                }
-            }
-        }
-        
-        // 2. Fallback: permissive regex matching without brace constraints
-        if (carouselItems.isEmpty()) {
-            val matches = Regex("""(["'])(video_url|display_url)\1\s*:\s*(["'])([^"']+)\3""").findAll(json)
-            for (match in matches) {
-                val key = match.groupValues[2]
-                val url = sanitizeUrl(match.groupValues[4]).takeIf { !it.startsWith("data:") } ?: continue
-                val isVid = key == "video_url" || url.contains(".mp4")
-                if (isVid) {
-                    carouselItems.add(InstagramCarouselItem(videoUrl = url, imageUrl = null, isVideo = true))
-                } else {
-                    carouselItems.add(InstagramCarouselItem(videoUrl = null, imageUrl = url, isVideo = false))
-                }
-            }
-        }
-        
-        val distinctCarouselItems = carouselItems.distinctBy { it.videoUrl ?: it.imageUrl }
-            .toMutableList()
-            
-        if (distinctCarouselItems.isNotEmpty()) {
-            val hasMain = distinctCarouselItems.any { it.videoUrl == videoUrl || (it.imageUrl == imageUrl && imageUrl != null) }
-            if (!hasMain && (videoUrl != null || imageUrl != null)) {
-                distinctCarouselItems.add(0, InstagramCarouselItem(videoUrl, imageUrl, isVideo))
-            }
-        }
-
-        return Result.success(
-            InstagramMediaDetails(
-                id = shortcode,
-                title = title ?: (if (isVideo) "Instagram Reel ($shortcode)" else "Instagram Post ($shortcode)"),
-                author = author,
-                thumbnailUrl = imageUrl ?: videoUrl,
-                videoUrl = videoUrl,
-                imageUrl = imageUrl,
-                isVideo = isVideo,
-                durationSeconds = null,
-                carouselItems = distinctCarouselItems
-            )
-        )
+        return result
     }
 
-    private fun sanitizeUrl(url: String): String {
-        return url.replace("\\u0026", "&")
-            .replace("&amp;", "&")
-            .replace("\\/", "/")
-            .replace("\\", "")
-            .trim()
+    private fun cleanUrl(raw: String?): String? {
+        if (raw.isNullOrBlank()) return null
+        // JSONObject has already decoded ordinary JSON. HTML attributes and doubly encoded
+        // strings can still contain JSON slash/unicode escapes. Reject unknown backslashes.
+        val decoded = Regex("""\\(?:u([0-9a-fA-F]{4})|/)""").replace(raw.trim()) { match ->
+            match.groups[1]?.value?.toInt(16)?.toChar()?.toString() ?: "/"
+        }
+        val url = unescapeHtmlEntities(decoded)
+        return url.takeIf { '\\' !in it && it.toHttpUrlOrNull()?.isHttps == true }
+    }
+
+    private fun videoUrl(raw: String?): String? = cleanUrl(raw)?.takeUnless {
+        it.substringBefore('?').substringBefore('#').substringAfterLast('.').lowercase() in
+            setOf("jpg", "jpeg", "png", "webp", "gif", "webm", "m3u8", "mpd", "mov", "mkv", "avi")
     }
 
     private fun unescapeHtmlEntities(input: String): String {
@@ -530,15 +304,4 @@ class InstagramExtractor @Inject constructor(
         return result
     }
 
-    private fun stripHtmlTags(input: String): String {
-        return unescapeHtmlEntities(input.replace(Regex("<[^>]*>"), "")).trim()
-    }
-
-    private fun unescapeJsonString(input: String): String {
-        return input.replace("\\n", " ")
-            .replace("\\\"", "\"")
-            .replace("\\/", "/")
-            .replace("\\\\", "\\")
-            .trim()
-    }
 }

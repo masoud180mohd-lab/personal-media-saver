@@ -33,6 +33,7 @@ import java.util.UUID
 class DownloadRepositoryIntegrationTest {
 
     private lateinit var appDatabase: MediaSaverDatabase
+    private lateinit var testQueue: DownloadQueueManager
     private lateinit var downloadRepository: DownloadRepositoryImpl
     
     @Before
@@ -50,6 +51,8 @@ class DownloadRepositoryIntegrationTest {
             override suspend fun findActiveDownloads(): List<DownloadEntity> = emptyList()
         }
         val queue = DownloadQueueManager(context, queueDao, appDatabase.streamOptionDao(), worker, tempFiles, RetryPolicy())
+        testQueue = queue
+        testQueue.maxConcurrentDownloads = 0
         downloadRepository = DownloadRepositoryImpl(queue, dao, worker)
     }
 
@@ -96,5 +99,35 @@ class DownloadRepositoryIntegrationTest {
             
             cancelAndIgnoreRemainingEvents()
         }
+    }
+    @Test fun `carousel siblings enqueue atomically while identical slide is deduplicated`() = runTest {
+        val task = com.mediasaver.core.model.DownloadTask("one", "https://instagram.com/p/abc/",
+            com.mediasaver.core.model.PlatformId.INSTAGRAM, "abc")
+        val stream = com.mediasaver.core.model.StreamInfo("https://cdninstagram.com/one.jpg", mediaIndex = 0)
+        testQueue.enqueue(task, stream)
+        testQueue.enqueue(task.copy(id = "two"), stream.copy(mediaIndex = 1))
+        assertEquals("abc#slide_1", appDatabase.downloadDao().getById("one")?.mediaId)
+        assertEquals("abc#slide_2", appDatabase.downloadDao().getById("two")?.mediaId)
+        assertEquals(1, appDatabase.streamOptionDao().getByDownloadId("two").size)
+        val duplicate = runCatching { testQueue.enqueue(task.copy(id = "copy"), stream) }
+        org.junit.Assert.assertTrue(duplicate.isFailure)
+        org.junit.Assert.assertNull(appDatabase.downloadDao().getById("copy"))
+        val audio = com.mediasaver.core.model.StreamInfo("https://audio", format = "m4a", isAudioOnly = true)
+        testQueue.enqueue(task.copy(id = "audio", mediaId = "different"), audio)
+        org.junit.Assert.assertTrue(appDatabase.streamOptionDao().getByDownloadId("audio").single().isAudioOnly)
+    }
+
+    @Test fun `invalid stream rolls back its task and status hash is persisted atomically`() = runTest {
+        val task = DownloadEntity(id = "atomic", url = "url", mediaId = "m", platform = "YOUTUBE", status = "QUEUED")
+        val bad = com.mediasaver.core.database.entity.StreamOptionEntity("option", "missing-parent", "stream")
+        val result = runCatching { appDatabase.streamOptionDao().enqueue(task, listOf(bad)) }
+        org.junit.Assert.assertTrue(result.isFailure)
+        org.junit.Assert.assertNull(appDatabase.downloadDao().getById(task.id))
+        val dao = appDatabase.whatsappStatusDao()
+        dao.insert(com.mediasaver.core.database.entity.WhatsAppStatusEntity("status", "test.jpg",
+            "content://source", "IMAGE", 10, 1, ""))
+        dao.markSaved("status", "content://gallery/item", "computed-sha")
+        assertEquals("content://gallery/item", dao.getByFileHash("computed-sha")?.savedPath)
+        org.junit.Assert.assertTrue(dao.getByFileHash("computed-sha")!!.isSaved)
     }
 }

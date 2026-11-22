@@ -29,11 +29,11 @@ interface WhatsAppStatusDao {
     @Query("SELECT * FROM whatsapp_statuses WHERE originalUri = :originalUri LIMIT 1")
     suspend fun getByOriginalUri(originalUri: String): WhatsAppStatusEntity?
 
-    @Query("SELECT * FROM whatsapp_statuses WHERE fileHash = :fileHash LIMIT 1")
+    @Query("SELECT * FROM whatsapp_statuses WHERE fileHash = :fileHash AND isSaved = 1 AND savedPath IS NOT NULL LIMIT 1")
     suspend fun getByFileHash(fileHash: String): WhatsAppStatusEntity?
 
-    @Query("UPDATE whatsapp_statuses SET isSaved = 1, savedPath = :savedPath WHERE id = :id")
-    suspend fun markSaved(id: String, savedPath: String)
+    @Query("UPDATE whatsapp_statuses SET isSaved = 1, savedPath = :savedPath, fileHash = :fileHash WHERE id = :id")
+    suspend fun markSaved(id: String, savedPath: String, fileHash: String)
 
     @Query("DELETE FROM whatsapp_statuses")
     suspend fun deleteAll()

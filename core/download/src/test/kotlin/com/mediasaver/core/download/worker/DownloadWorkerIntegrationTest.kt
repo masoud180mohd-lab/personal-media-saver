@@ -51,7 +51,9 @@ class DownloadWorkerIntegrationTest {
         mockWebServer = MockWebServer()
         mockWebServer.start()
 
-        okHttpClient = OkHttpClient.Builder().build()
+        okHttpClient = OkHttpClient.Builder().proxy(java.net.Proxy.NO_PROXY).dns(object : okhttp3.Dns {
+            override fun lookup(hostname: String) = listOf(java.net.InetAddress.getLoopbackAddress())
+        }).build()
 
         appDatabase = Room.inMemoryDatabaseBuilder(
             context,
@@ -84,7 +86,7 @@ class DownloadWorkerIntegrationTest {
         val output = ByteArrayOutputStream()
         val resolver = ApplicationProvider.getApplicationContext<Context>().contentResolver
         shadowOf(resolver).registerOutputStream(item, output)
-        val testContent = "dummy_video_data".toByteArray()
+        val testContent = byteArrayOf(0, 0, 0, 20) + "ftypisomfixture".toByteArray()
         mockWebServer.enqueue(
             MockResponse()
                 .setResponseCode(200)
@@ -127,6 +129,8 @@ class DownloadWorkerIntegrationTest {
         // Verify DB state
         val updatedEntity = appDatabase.downloadDao().getById(downloadId)
         assertEquals("COMPLETED", updatedEntity?.status)
+        assertEquals(testContent.size.toLong(), updatedEntity?.downloadedBytes)
+        assertEquals(testContent.size.toLong(), updatedEntity?.totalBytes)
         assertEquals(item.toString(), result.getOrThrow())
         org.junit.Assert.assertArrayEquals(testContent, output.toByteArray())
         
@@ -173,5 +177,43 @@ class DownloadWorkerIntegrationTest {
         val updatedEntity = appDatabase.downloadDao().getById(downloadId)
         assertEquals("FAILED", updatedEntity?.status)
         assertTrue(updatedEntity?.errorType?.contains("DownloadFailed") == true)
+    }
+    private suspend fun transfer(id: String, bytes: ByteArray, type: String, format: String, audio: Boolean = false): Result<String> {
+        val url = mockWebServer.url("/media").newBuilder().host("video.cdninstagram.com").build().toString()
+        appDatabase.downloadDao().insert(com.mediasaver.core.database.entity.DownloadEntity(
+            id = id, url = url, platform = "INSTAGRAM", mediaId = id, status = "QUEUED"))
+        mockWebServer.enqueue(MockResponse().setHeader("Content-Type", type).setBody(okio.Buffer().write(bytes)))
+        return downloadWorker.executeDownload(id, "media.$format", PlatformId.INSTAGRAM,
+            StreamInfo(url, format = format, isAudioOnly = audio))
+    }
+
+    @Test fun `known CDN text and disguised binaries never publish`() = runTest {
+        for ((index, type) in listOf("text/html", "application/json", "application/octet-stream", "video/mp4").withIndex()) {
+            val id = "bad$index"
+            val error = transfer(id, "<html>unavailable</html>".toByteArray(), type, "mp4").exceptionOrNull()
+            assertTrue(error is com.mediasaver.core.model.error.AppError.DownloadFailed)
+            assertEquals("FAILED", appDatabase.downloadDao().getById(id)?.status)
+            assertTrue(!tempFileManager.createTempDownloadFile(id).exists())
+        }
+    }
+
+    @Test fun `image and audio use their collections and repeated content reuses saved URI`() = runTest {
+        val resolver = ApplicationProvider.getApplicationContext<Context>().contentResolver
+        val images = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val audio = MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val jpeg = byteArrayOf(-1, -40, -1, 0)
+        val m4a = byteArrayOf(0,0,0,20) + "ftypM4A ".toByteArray()
+        val mp3 = "ID3fixture".toByteArray()
+        for ((index, data) in listOf(jpeg, m4a, mp3).withIndex()) {
+            val expected = ContentUris.withAppendedId(if (index == 0) images else audio, index.toLong() + 1)
+            val sink = ByteArrayOutputStream()
+            shadowOf(resolver).registerOutputStream(expected, sink)
+            val id = "media$index"
+            val path = transfer(id, data, "application/octet-stream", listOf("jpg","m4a","mp3")[index], index > 0).getOrThrow()
+            assertEquals(expected.toString(), path)
+            org.junit.Assert.assertArrayEquals(data, sink.toByteArray())
+            assertEquals(data.size.toLong(), appDatabase.downloadDao().getById(id)?.downloadedBytes)
+            if (index == 0) assertEquals(path, transfer("copy", jpeg, "image/jpeg", "jpg").getOrThrow())
+        }
     }
 }

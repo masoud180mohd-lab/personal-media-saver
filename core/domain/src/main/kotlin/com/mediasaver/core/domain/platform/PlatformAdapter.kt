@@ -29,6 +29,9 @@ interface PlatformAdapter {
      */
     suspend fun resolveStreams(mediaId: String): Result<List<StreamInfo>>
 
+    suspend fun resolveStreams(mediaId: String, sourceUrl: String): Result<List<StreamInfo>> =
+        resolveStreams(mediaId)
+
     /**
      * Check whether this extractor is currently operational.
      */

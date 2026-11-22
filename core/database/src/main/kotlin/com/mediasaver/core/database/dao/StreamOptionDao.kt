@@ -3,7 +3,9 @@ package com.mediasaver.core.database.dao
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
+import androidx.room.Transaction
 import androidx.room.Query
+import com.mediasaver.core.database.entity.DownloadEntity
 import com.mediasaver.core.database.entity.StreamOptionEntity
 import kotlinx.coroutines.flow.Flow
 
@@ -12,6 +14,15 @@ import kotlinx.coroutines.flow.Flow
  */
 @Dao
 interface StreamOptionDao {
+
+    @Insert
+    suspend fun insertTask(task: DownloadEntity)
+
+    @Transaction
+    suspend fun enqueue(task: DownloadEntity, options: List<StreamOptionEntity>) {
+        insertTask(task)
+        insertAll(options)
+    }
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(options: List<StreamOptionEntity>)

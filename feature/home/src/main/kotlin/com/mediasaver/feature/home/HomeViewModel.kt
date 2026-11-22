@@ -10,7 +10,10 @@ import com.mediasaver.core.domain.usecase.ResolveStreamsUseCase
 import com.mediasaver.core.model.DownloadStatus
 import com.mediasaver.core.model.DownloadTask
 import com.mediasaver.core.model.PlatformId
+import com.mediasaver.core.model.companionAudio
 import com.mediasaver.core.model.StreamInfo
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -32,11 +35,15 @@ class HomeViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
 
+    private var extraction: Job? = null
+
     fun onUrlChange(newUrl: String) {
+        if (newUrl == _uiState.value.urlInput) return
+        extraction?.cancel()
         val detected = PlatformDetector.detect(newUrl)
         _uiState.update {
             it.copy(
-                urlInput = newUrl,
+                urlInput = newUrl, mediaInfo = null, selectedStream = null, availableStreams = emptyList(), isExtracting = false,
                 detectedPlatform = detected,
                 errorMessage = null
             )
@@ -50,7 +57,8 @@ class HomeViewModel @Inject constructor(
             return
         }
 
-        viewModelScope.launch {
+        extraction?.cancel()
+        extraction = viewModelScope.launch {
             _uiState.update {
                 it.copy(
                     isExtracting = true,
@@ -65,7 +73,13 @@ class HomeViewModel @Inject constructor(
             result.onSuccess { info ->
                 // Resolve stream options
                 val streamsResult = resolveStreamsUseCase(info.id, targetUrl)
-                val streams = streamsResult.getOrDefault(emptyList())
+                val streams = streamsResult.getOrNull().orEmpty()
+                if (streams.isEmpty()) {
+                    _uiState.update { it.copy(isExtracting = false, mediaInfo = info, selectedStream = null,
+                        availableStreams = emptyList(), errorMessage = streamsResult.exceptionOrNull()?.localizedMessage
+                            ?: "No downloadable streams are available.") }
+                    return@launch
+                }
 
                 // Select preferred stream from user settings or fallback to first available
                 val settings = getSettingsUseCase().firstOrNull()
@@ -100,100 +114,33 @@ class HomeViewModel @Inject constructor(
     }
 
     fun startDownload(streamToDownload: StreamInfo? = null) {
-        val currentState = _uiState.value
-        val media = currentState.mediaInfo ?: return
-        val stream = streamToDownload ?: currentState.selectedStream ?: return
-
-        viewModelScope.launch {
-            _uiState.update { it.copy(isEnqueuing = true, errorMessage = null) }
-
-            try {
-                val taskId = UUID.randomUUID().toString()
-                val task = DownloadTask(
-                    id = taskId,
-                    url = currentState.urlInput.trim(),
-                    platform = media.platform,
-                    mediaId = media.id,
-                    title = media.title,
-                    thumbnailUrl = media.thumbnailUrl,
-                    status = DownloadStatus.QUEUED,
-                    selectedQuality = stream.quality,
-                    selectedFormat = stream.format,
-                    totalBytes = stream.fileSize,
-                    durationSeconds = media.durationSeconds
-                )
-
-                // Check for companion audio stream if selected stream is video-only adaptive
-                val audioStream = if (stream.isVideoOnly) {
-                    currentState.availableStreams.firstOrNull { it.isAudioOnly }
-                } else {
-                    null
-                }
-
-                enqueueDownloadUseCase(task, stream, audioStream)
-
-                _uiState.update {
-                    it.copy(
-                        isEnqueuing = false,
-                        downloadEnqueuedMessage = "Download queued: ${(media.title ?: "Media").take(30)}..."
-                    )
-                }
-            } catch (e: Exception) {
-                _uiState.update {
-                    it.copy(
-                        isEnqueuing = false,
-                        errorMessage = e.localizedMessage ?: "Failed to queue download."
-                    )
-                }
-            }
-        }
+        val selected = streamToDownload ?: _uiState.value.selectedStream ?: return
+        startBatchDownload(listOf(selected))
     }
 
     fun startBatchDownload(streams: List<StreamInfo>) {
-        val currentState = _uiState.value
-        val media = currentState.mediaInfo ?: return
-        if (streams.isEmpty()) return
-
+        val state = _uiState.value
+        val media = state.mediaInfo ?: return
+        if (state.isEnqueuing || streams.isEmpty() || !state.availableStreams.containsAll(streams)) return
+        _uiState.update { it.copy(isEnqueuing = true, errorMessage = null) }
         viewModelScope.launch {
-            _uiState.update { it.copy(isEnqueuing = true, errorMessage = null) }
-
             try {
-                streams.forEach { stream ->
-                    val taskId = UUID.randomUUID().toString()
-                    val task = DownloadTask(
-                        id = taskId,
-                        url = currentState.urlInput.trim(),
-                        platform = media.platform,
-                        mediaId = media.id,
-                        title = media.title,
-                        thumbnailUrl = media.thumbnailUrl,
-                        status = DownloadStatus.QUEUED,
-                        selectedQuality = stream.quality,
-                        selectedFormat = stream.format,
-                        totalBytes = stream.fileSize,
-                        durationSeconds = media.durationSeconds
-                    )
-
-                    val audioStream = if (stream.isVideoOnly) {
-                        currentState.availableStreams.firstOrNull { it.isAudioOnly }
-                    } else null
-
-                    enqueueDownloadUseCase(task, stream, audioStream)
+                for (requested in streams) {
+                    val audio = if (requested.isVideoOnly) requested.companionAudio(state.availableStreams) else null
+                    val primary = if (requested.isVideoOnly && audio == null)
+                        state.availableStreams.firstOrNull { it.isProgressive } ?: error("No compatible audio stream is available.")
+                        else requested
+                    val task = DownloadTask(id = UUID.randomUUID().toString(), url = media.sourceUrl,
+                        platform = media.platform, mediaId = media.id, title = media.title, thumbnailUrl = primary.thumbnailUrl ?: media.thumbnailUrl,
+                        status = DownloadStatus.QUEUED, selectedQuality = primary.quality, selectedFormat = primary.format,
+                        totalBytes = primary.fileSize, durationSeconds = media.durationSeconds)
+                    enqueueDownloadUseCase(task, primary, audio)
                 }
-
-                _uiState.update {
-                    it.copy(
-                        isEnqueuing = false,
-                        downloadEnqueuedMessage = "Queued ${streams.size} items from ${(media.title ?: "Carousel").take(30)}..."
-                    )
-                }
+                _uiState.update { it.copy(isEnqueuing = false, downloadEnqueuedMessage = "Download queued") }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                _uiState.update {
-                    it.copy(
-                        isEnqueuing = false,
-                        errorMessage = e.localizedMessage ?: "Failed to queue batch download."
-                    )
-                }
+                _uiState.update { it.copy(isEnqueuing = false, errorMessage = e.localizedMessage ?: "Failed to queue download.") }
             }
         }
     }

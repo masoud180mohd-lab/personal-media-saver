@@ -127,6 +127,7 @@ class InstagramExtractorTest {
         // We expect 3 carousel items
         assertEquals(3, details.carouselItems.size)
         
+        assertEquals(listOf(0, 1, 2), details.carouselItems.map { it.mediaIndex })
         val slide1 = details.carouselItems[0]
         assertEquals("https://slide1.jpg", slide1.imageUrl)
         assertEquals(null, slide1.videoUrl)

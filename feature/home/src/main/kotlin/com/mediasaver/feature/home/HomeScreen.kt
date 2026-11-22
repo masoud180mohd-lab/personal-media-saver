@@ -31,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import com.mediasaver.core.model.isCarousel
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -78,9 +79,9 @@ fun HomeScreen(
     }
 
     LaunchedEffect(uiState.downloadEnqueuedMessage) {
-        uiState.downloadEnqueuedMessage?.let { msg ->
-            snackbarHostState.showSnackbar(msg)
+        uiState.downloadEnqueuedMessage?.let {
             viewModel.clearEnqueuedMessage()
+            onNavigateToDownloads()
         }
     }
 
@@ -106,11 +107,9 @@ fun HomeScreen(
         onSelectStream = { viewModel.onSelectStream(it) },
         onStartDownload = { stream ->
             viewModel.startDownload(stream)
-            onNavigateToDownloads()
         },
         onStartBatchDownload = { streams ->
             viewModel.startBatchDownload(streams)
-            onNavigateToDownloads()
         }
     )
 }
@@ -130,8 +129,8 @@ fun HomeScreenContent(
     val isReduceMotion = rememberIsReduceMotionEnabled()
     val haptic = LocalHapticFeedback.current
     
-    val isCarousel = uiState.availableStreams.size > 1 && uiState.availableStreams.all { it.quality?.startsWith("Slide ") == true }
-    var activeCarouselSlide by remember { androidx.compose.runtime.mutableStateOf<StreamInfo?>(null) }
+    val isCarousel = uiState.availableStreams.isCarousel()
+    var activeCarouselSlide by remember(uiState.availableStreams) { androidx.compose.runtime.mutableStateOf(uiState.availableStreams.firstOrNull()) }
     
     LaunchedEffect(uiState.availableStreams) {
         if (isCarousel && uiState.availableStreams.isNotEmpty()) {
@@ -288,7 +287,7 @@ fun HomeScreenContent(
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                     onStartDownload(null)
                                 },
-                                enabled = !uiState.isEnqueuing,
+                                enabled = !uiState.isEnqueuing && uiState.selectedStream != null && uiState.availableStreams.isNotEmpty(),
                                 shape = CircleShape,
                                 modifier = Modifier
                                     .fillMaxWidth()

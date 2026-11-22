@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
+import androidx.room.Transaction
 import androidx.room.Query
 import androidx.room.Update
 import androidx.room.Upsert
@@ -95,6 +96,12 @@ interface DownloadDao {
     @Query("UPDATE downloads SET status = 'CANCELLED', updatedAt = :updatedAt WHERE id = :id")
     suspend fun markCancelled(id: String, updatedAt: Long = System.currentTimeMillis())
 
+    @Transaction
+    suspend fun completeWithProgress(id: String, path: String, hash: String, size: Long) {
+        updateProgress(id, size, size)
+        markCompleted(id, path, hash)
+    }
+
     @Query("DELETE FROM downloads WHERE id = :id")
     suspend fun deleteById(id: String)
 
@@ -107,10 +114,10 @@ interface DownloadDao {
     @Query("DELETE FROM downloads")
     suspend fun deleteAll()
 
-    @Query("SELECT * FROM downloads WHERE url = :url AND platform = :platform ORDER BY createdAt DESC LIMIT 1")
+    @Query("SELECT * FROM downloads WHERE url = :url AND platform = :platform AND status IN ('QUEUED', 'EXTRACTING', 'DOWNLOADING', 'MUXING', 'COMPLETED') ORDER BY createdAt DESC LIMIT 1")
     suspend fun findByUrlAndPlatform(url: String, platform: String): DownloadEntity?
 
-    @Query("SELECT * FROM downloads WHERE mediaId = :mediaId AND platform = :platform ORDER BY createdAt DESC LIMIT 1")
+    @Query("SELECT * FROM downloads WHERE mediaId = :mediaId AND platform = :platform AND status IN ('QUEUED', 'EXTRACTING', 'DOWNLOADING', 'MUXING', 'COMPLETED') ORDER BY createdAt DESC LIMIT 1")
     suspend fun findByMediaIdAndPlatform(mediaId: String, platform: String): DownloadEntity?
 
     @Query("SELECT * FROM downloads WHERE fileHash = :fileHash AND status = 'COMPLETED' LIMIT 1")

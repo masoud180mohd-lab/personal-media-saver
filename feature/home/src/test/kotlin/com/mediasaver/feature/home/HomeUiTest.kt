@@ -166,4 +166,14 @@ class HomeUiTest {
         composeTestRule.onNodeWithText(message).assertIsDisplayed()
         composeTestRule.onNodeWithText("Open Settings / Login").assertDoesNotExist()
     }
+    @Test fun `metadata without resolved streams keeps download disabled`() {
+        composeTestRule.setContent {
+            HomeScreenContent(uiState = HomeUiState(mediaInfo = MediaInfo("failed", PlatformId.INSTAGRAM, "Preview",
+                sourceUrl = "https://instagram.com/reel/failed"), errorMessage = "No playable video"),
+                snackbarHostState = SnackbarHostState(), onUrlChange = {}, onProcessUrl = {}, onPaste = {},
+                onSelectStream = {}, onStartDownload = {}, onStartBatchDownload = {})
+        }
+        composeTestRule.onNodeWithText("No playable video").assertExists()
+        composeTestRule.onNodeWithText("Download").assertIsNotEnabled()
+    }
 }

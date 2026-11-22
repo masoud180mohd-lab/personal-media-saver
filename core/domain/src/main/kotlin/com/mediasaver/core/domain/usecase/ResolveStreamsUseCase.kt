@@ -14,6 +14,6 @@ class ResolveStreamsUseCase @Inject constructor(
     suspend operator fun invoke(mediaId: String, url: String): Result<List<StreamInfo>> {
         val adapter = platformResolver.resolve(url)
             ?: return Result.failure(AppError.UnsupportedPlatform(url))
-        return adapter.resolveStreams(mediaId)
+        return adapter.resolveStreams(mediaId, url)
     }
 }

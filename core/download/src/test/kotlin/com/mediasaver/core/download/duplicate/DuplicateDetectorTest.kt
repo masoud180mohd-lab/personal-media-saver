@@ -112,6 +112,12 @@ class DuplicateDetectorTest {
         assertEquals("task-hash-match", result.existingTask?.id)
     }
 
+    @Test fun `extracting slides deduplicate on their own index only`() = runBlocking {
+        fakeDao.items.add(createTestEntity("first", "post", "INSTAGRAM", "abc#slide_1", "EXTRACTING"))
+        assertTrue(duplicateDetector.checkBeforeDownload("post", PlatformId.INSTAGRAM, "abc#slide_1").isDuplicate)
+        assertFalse(duplicateDetector.checkBeforeDownload("post", PlatformId.INSTAGRAM, "abc#slide_2").isDuplicate)
+    }
+
     private fun createTestEntity(
         id: String,
         url: String,

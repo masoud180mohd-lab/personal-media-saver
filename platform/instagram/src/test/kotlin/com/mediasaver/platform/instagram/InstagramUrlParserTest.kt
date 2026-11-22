@@ -70,6 +70,9 @@ class InstagramUrlParserTest {
         assertTrue(InstagramUrlParser.isReel("https://www.instagram.com/reels/C89abc123/"))
         assertFalse(InstagramUrlParser.isReel("https://www.instagram.com/p/C89abc123/"))
         assertFalse(InstagramUrlParser.isReel("https://www.instagram.com/tv/C89abc123/"))
+        assertFalse(InstagramUrlParser.isReel("https://instagram.com/p/code/?next=/reel/other"))
+        assertFalse(InstagramUrlParser.isReel("https://instagram.com/p/reel/"))
+        assertFalse(InstagramUrlParser.isReel("https://example.com/reel/code"))
     }
 
     @Test

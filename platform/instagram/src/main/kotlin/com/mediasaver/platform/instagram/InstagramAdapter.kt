@@ -34,6 +34,23 @@ class InstagramAdapter @Inject constructor(
         .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
         .build()
 
+    private data class Cached(val time: Long, val details: InstagramMediaDetails)
+    private val cache = LinkedHashMap<Pair<String, Boolean>, Cached>()
+
+    private suspend fun details(id: String, expectVideo: Boolean): Result<InstagramMediaDetails> {
+        val key = id to expectVideo
+        synchronized(cache) {
+            cache.entries.removeAll { System.nanoTime() - it.value.time >= 30_000_000_000L }
+            cache[key]?.let { return Result.success(it.details) }
+        }
+        return instagramExtractor.extract(id, expectVideo).onSuccess {
+            synchronized(cache) {
+                if (cache.size >= 24) cache.remove(cache.keys.first())
+                cache[key] = Cached(System.nanoTime(), it)
+            }
+        }
+    }
+
     override val platformId: PlatformId = PlatformId.INSTAGRAM
     override val platformName: String = "Instagram"
 
@@ -48,7 +65,7 @@ class InstagramAdapter @Inject constructor(
                 return@withContext Result.failure(AppError.InvalidUrl(url))
             }
 
-        val extractionResult = instagramExtractor.extract(shortcode)
+        val extractionResult = details(shortcode, InstagramUrlParser.isReel(url))
         if (extractionResult.isFailure) {
             val ex = extractionResult.exceptionOrNull()
             Log.e(TAG, "extractMediaInfo failed for shortcode $shortcode", ex)
@@ -77,90 +94,25 @@ class InstagramAdapter @Inject constructor(
         )
     }
 
-    override suspend fun resolveStreams(mediaId: String): Result<List<StreamInfo>> = withContext(Dispatchers.IO) {
-        val extractionResult = instagramExtractor.extract(mediaId)
-        if (extractionResult.isFailure) {
-            val ex = extractionResult.exceptionOrNull()
-            Log.e(TAG, "resolveStreams failed for mediaId $mediaId", ex)
-            return@withContext Result.failure(
-                ex ?: AppError.ExtractionFailed(PlatformId.INSTAGRAM)
-            )
-        }
+    override suspend fun resolveStreams(mediaId: String) = resolveStreams(mediaId, "")
 
-        val details = extractionResult.getOrThrow()
-        val streams = mutableListOf<StreamInfo>()
-
-        if (details.carouselItems.isNotEmpty()) {
-            details.carouselItems.forEachIndexed { index, item ->
-                if (item.isVideo && !item.videoUrl.isNullOrBlank()) {
-                    streams.add(
-                        StreamInfo(
-                            url = item.videoUrl,
-                            quality = "Slide ${index + 1}",
-                            format = "mp4",
-                            mimeType = "video/mp4",
-                            isVideoOnly = false,
-                            isAudioOnly = false,
-                            fileSize = null,
-                            bitrate = null,
-                            codec = "h264"
-                        )
-                    )
-                } else if (!item.imageUrl.isNullOrBlank()) {
-                    streams.add(
-                        StreamInfo(
-                            url = item.imageUrl,
-                            quality = "Slide ${index + 1}",
-                            format = "jpg",
-                            mimeType = "image/jpeg",
-                            isVideoOnly = false,
-                            isAudioOnly = false,
-                            fileSize = null,
-                            bitrate = null,
-                            codec = null
-                        )
-                    )
+    override suspend fun resolveStreams(mediaId: String, sourceUrl: String): Result<List<StreamInfo>> =
+        details(mediaId, InstagramUrlParser.isReel(sourceUrl)).map { media ->
+            fun stream(video: String?, image: String?, index: Int?): StreamInfo {
+                val quality = when {
+                    index != null -> "Slide ${index + 1}"
+                    video != null -> "HD"
+                    media.isDegradedPreview -> "Preview"
+                    else -> "High Resolution"
                 }
+                return StreamInfo(url = video ?: requireNotNull(image), quality = quality,
+                    format = if (video != null) "mp4" else "jpg",
+                    mimeType = if (video != null) "video/mp4" else "image/jpeg",
+                    mediaIndex = index, thumbnailUrl = image)
             }
-        } else {
-            if (details.isVideo && !details.videoUrl.isNullOrBlank()) {
-                streams.add(
-                    StreamInfo(
-                        url = details.videoUrl,
-                        quality = "HD",
-                        format = "mp4",
-                        mimeType = "video/mp4",
-                        isVideoOnly = false,
-                        isAudioOnly = false,
-                        fileSize = null,
-                        bitrate = null,
-                        codec = "h264"
-                    )
-                )
-            } else if (!details.imageUrl.isNullOrBlank()) {
-                streams.add(
-                    StreamInfo(
-                        url = details.imageUrl,
-                        quality = "High Resolution",
-                        format = "jpg",
-                        mimeType = "image/jpeg",
-                        isVideoOnly = false,
-                        isAudioOnly = false,
-                        fileSize = null,
-                        bitrate = null,
-                        codec = null
-                    )
-                )
-            }
+            if (media.carouselItems.isEmpty()) listOf(stream(media.videoUrl, media.imageUrl, null))
+            else media.carouselItems.map { stream(it.videoUrl, it.imageUrl, it.mediaIndex) }
         }
-
-        if (streams.isEmpty()) {
-            Log.w(TAG, "No streams resolved for mediaId $mediaId")
-            return@withContext Result.failure(AppError.ExtractionFailed(PlatformId.INSTAGRAM))
-        }
-
-        Result.success(streams)
-    }
 
     override suspend fun healthCheck(): AdapterStatus = withContext(Dispatchers.IO) {
         try {

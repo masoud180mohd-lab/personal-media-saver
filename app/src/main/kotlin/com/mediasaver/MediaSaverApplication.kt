@@ -49,7 +49,7 @@ class MediaSaverApplication : Application(), ImageLoaderFactory {
 
         CoroutineScope(Dispatchers.IO).launch { LegacyInstagramCleanup.run(this@MediaSaverApplication) }
         createNotificationChannel()
-        scheduleStartupCleanup()
+        scheduleDownloadRecovery()
     }
 
     private fun createNotificationChannel() {
@@ -66,7 +66,7 @@ class MediaSaverApplication : Application(), ImageLoaderFactory {
         }
     }
 
-    private fun scheduleStartupCleanup() {
+    private fun scheduleDownloadRecovery() {
         val cleanupWorkRequest = OneTimeWorkRequestBuilder<StartupCleanupWorker>().build()
         WorkManager.getInstance(this).enqueueUniqueWork(
             "StartupCleanup",

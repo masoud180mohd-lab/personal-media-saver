@@ -71,11 +71,11 @@ class TempFileManager @Inject constructor(
      *
      * @return Count of deleted orphaned files
      */
-    fun cleanOrphanedTempFiles(maxAgeMillis: Long = 24 * 60 * 60 * 1000L): Int {
+    fun cleanOrphanedTempFiles(activeDownloadIds: Set<String>, maxAgeMillis: Long = 24 * 60 * 60 * 1000L): Int {
         val cutoff = System.currentTimeMillis() - maxAgeMillis
         var deletedCount = 0
         downloadsDir.listFiles()?.forEach { file ->
-            if (file.isFile && file.lastModified() < cutoff) {
+            if (file.isFile && file.lastModified() < cutoff && activeDownloadIds.none { file.name.startsWith(it) }) {
                 if (file.delete()) {
                     deletedCount++
                 }

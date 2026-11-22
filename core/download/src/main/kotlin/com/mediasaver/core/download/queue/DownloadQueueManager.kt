@@ -51,9 +51,8 @@ class DownloadQueueManager @Inject constructor(
 
     var maxConcurrentDownloads: Int = 3
 
-    init {
-        recoverQueueState()
-    }
+    private var recovered = false
+    private val duplicates = com.mediasaver.core.download.duplicate.DuplicateDetector(downloadDao)
 
     /**
      * Observable stream of all active (queued, downloading, muxing) tasks.
@@ -79,9 +78,12 @@ class DownloadQueueManager @Inject constructor(
         videoStream: StreamInfo,
         audioStream: StreamInfo? = null
     ) {
+        performStartupRecovery()
         queueMutex.withLock {
-            val entity = task.toEntity().copy(status = DownloadStatus.QUEUED.name)
-            downloadDao.insert(entity)
+            val itemId = videoStream.mediaIndex?.let { "${task.mediaId}#slide_${it + 1}" } ?: task.mediaId
+            val existing = duplicates.checkBeforeDownload(task.url, task.platform, itemId)
+            if (existing.isDuplicate) throw IllegalStateException("This item is already queued or saved.")
+            val entity = task.toEntity().copy(mediaId = itemId, status = DownloadStatus.QUEUED.name)
 
             val streamEntities = mutableListOf<StreamOptionEntity>()
             streamEntities.add(
@@ -93,7 +95,7 @@ class DownloadQueueManager @Inject constructor(
                     format = videoStream.format,
                     mimeType = videoStream.mimeType,
                     isVideoOnly = videoStream.isVideoOnly,
-                    isAudioOnly = false,
+                    isAudioOnly = videoStream.isAudioOnly,
                     fileSize = videoStream.fileSize,
                     bitrate = videoStream.bitrate,
                     codec = videoStream.codec
@@ -118,7 +120,7 @@ class DownloadQueueManager @Inject constructor(
                 )
             }
 
-            streamOptionDao.insertAll(streamEntities)
+            streamOptionDao.enqueue(entity, streamEntities)
         }
 
         DownloadService.start(context)
@@ -142,6 +144,7 @@ class DownloadQueueManager @Inject constructor(
      * Manual retry is always permitted and resets the retry counter.
      */
     suspend fun retry(downloadId: String) {
+        performStartupRecovery()
         queueMutex.withLock {
             downloadDao.updateRetryCount(downloadId, 0)
             downloadDao.updateStatus(downloadId, DownloadStatus.QUEUED.name)
@@ -165,30 +168,23 @@ class DownloadQueueManager @Inject constructor(
      * Recovers from process death or application crash by resetting interrupted downloads
      * and sweeping orphaned temporary disk files.
      */
-    fun recoverQueueState() {
-        queueScope.launch {
-            var hasActive = false
-            queueMutex.withLock {
-                // Delete orphaned temp files older than 6 hours
-                tempFileManager.cleanOrphanedTempFiles(maxAgeMillis = 6 * 60 * 60 * 1000L)
-
-                // Any task stuck in EXTRACTING, DOWNLOADING or MUXING when app boots was interrupted by process death
-                val activeDownloads = downloadDao.findActiveDownloads()
-                for (download in activeDownloads) {
-                    if (download.status == DownloadStatus.EXTRACTING.name ||
-                        download.status == DownloadStatus.DOWNLOADING.name ||
-                        download.status == DownloadStatus.MUXING.name
-                    ) {
-                        downloadDao.updateStatus(download.id, DownloadStatus.QUEUED.name)
-                    }
+    suspend fun performStartupRecovery() {
+        val hasActive = queueMutex.withLock {
+            if (recovered) return
+            val active = downloadDao.findActiveDownloads()
+            for (task in active) {
+                if (task.id !in activeJobs.keys && task.status in setOf("EXTRACTING", "DOWNLOADING", "MUXING")) {
+                    if (task.retryCount >= 3) downloadDao.markFailed(task.id, "Interrupted", "Retry limit reached.")
+                    else downloadDao.updateStatus(task.id, "QUEUED")
                 }
-                hasActive = downloadDao.findActiveDownloads().isNotEmpty()
             }
-            if (hasActive) {
-                DownloadService.start(context)
-            }
-            processNextInQueue()
+            val protected = downloadDao.findActiveDownloads().mapTo(mutableSetOf()) { it.id } + activeJobs.keys
+            tempFileManager.cleanOrphanedTempFiles(protected)
+            if (protected.isNotEmpty()) DownloadService.start(context)
+            recovered = true
+            protected.isNotEmpty()
         }
+        if (hasActive) processNextInQueue()
     }
 
     /**
@@ -197,12 +193,13 @@ class DownloadQueueManager @Inject constructor(
     private fun processNextInQueue() {
         queueScope.launch {
             queueMutex.withLock {
+                if (!recovered) return@withLock
                 val currentRunning = activeJobs.size
                 if (currentRunning >= maxConcurrentDownloads) return@withLock
 
                 val capacity = maxConcurrentDownloads - currentRunning
                 val activeDownloads = downloadDao.findActiveDownloads()
-                val queuedTasks = activeDownloads.filter { it.status == DownloadStatus.QUEUED.name }
+                val queuedTasks = activeDownloads.filter { it.status == DownloadStatus.QUEUED.name && it.id !in activeJobs.keys }
                     .take(capacity)
 
                 for (taskEntity in queuedTasks) {
@@ -210,8 +207,8 @@ class DownloadQueueManager @Inject constructor(
                     if (activeJobs.containsKey(downloadId)) continue
 
                     val streams = streamOptionDao.getByDownloadId(downloadId)
-                    val videoStreamEntity = streams.firstOrNull { !it.isAudioOnly }
-                    val audioStreamEntity = streams.firstOrNull { it.isAudioOnly }
+                    val videoStreamEntity = streams.firstOrNull { it.id == "${downloadId}_video" } ?: streams.firstOrNull { !it.isAudioOnly } ?: streams.singleOrNull()
+                    val audioStreamEntity = streams.firstOrNull { it.isAudioOnly && it.id != videoStreamEntity?.id }
 
                     if (videoStreamEntity == null) {
                         downloadDao.markFailed(downloadId, "MissingStream", "No stream URL found for task")
@@ -224,7 +221,7 @@ class DownloadQueueManager @Inject constructor(
                         format = videoStreamEntity.format,
                         mimeType = videoStreamEntity.mimeType,
                         isVideoOnly = videoStreamEntity.isVideoOnly,
-                        isAudioOnly = false,
+                        isAudioOnly = videoStreamEntity.isAudioOnly,
                         fileSize = videoStreamEntity.fileSize,
                         bitrate = videoStreamEntity.bitrate,
                         codec = videoStreamEntity.codec
@@ -247,7 +244,7 @@ class DownloadQueueManager @Inject constructor(
                     val targetFileName = "${taskEntity.title ?: "media"}.${videoStream.format ?: "mp4"}"
                     val platform = PlatformId.fromString(taskEntity.platform)
 
-                    val job = queueScope.launch {
+                    val job = queueScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
                         try {
                             val result = downloadWorker.executeDownload(
                                 downloadId = downloadId,
@@ -285,6 +282,7 @@ class DownloadQueueManager @Inject constructor(
                     }
 
                     activeJobs[downloadId] = job
+                    job.start()
                 }
             }
         }

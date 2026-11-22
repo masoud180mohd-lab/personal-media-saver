@@ -7,8 +7,8 @@ import okhttp3.Response
 import java.io.IOException
 
 /** Optional tighter destination constraint for requests to a single platform's public pages. */
-class PlatformWebDomain(private val domain: String) {
-    fun accepts(host: String) = host == domain || host.endsWith(".$domain")
+class PlatformWebDomain(private vararg val domains: String) {
+    fun accepts(host: String) = domains.any { host == it || host.endsWith(".$it") }
 }
 
 class SsrfRedirectInterceptor(

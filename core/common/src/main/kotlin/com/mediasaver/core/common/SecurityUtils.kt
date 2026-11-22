@@ -21,7 +21,7 @@ object SecurityUtils {
         "jpg",
         "jpeg",
         "png",
-        "webp"
+        "webp", "m4a", "mp3", "aac", "ogg"
     )
 
     /** Whitelist of permitted MIME type prefixes and full types. */
@@ -100,15 +100,7 @@ object SecurityUtils {
         if (mimeType.isNullOrBlank()) return true // Allow empty/missing, falls back to stream analysis
         val cleanMime = mimeType.split(";").first().trim().lowercase()
         
-        // Explicit rejection of active/executable payloads
-        if (cleanMime.startsWith("text/") && cleanMime != "text/plain") return false
-        if (cleanMime.contains("javascript") || cleanMime.contains("html") || cleanMime.contains("json")) return false
-        if (cleanMime.contains("executable") || cleanMime.contains("x-msdownload") || cleanMime.contains("application/x-")) return false
-
-        return ALLOWED_MIME_TYPES.contains(cleanMime) ||
-                cleanMime.startsWith("video/") ||
-                cleanMime.startsWith("audio/") ||
-                cleanMime.startsWith("image/")
+        return cleanMime in ALLOWED_MIME_TYPES
     }
 
     /**

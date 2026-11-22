@@ -16,6 +16,9 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import javax.inject.Inject
@@ -34,6 +37,8 @@ class StatusRepositoryImpl @Inject constructor(
     private val mediaStoreManager: MediaStoreManager,
     private val settingsRepository: SettingsRepository
 ) : StatusRepository {
+
+    private val saveMutex = Mutex()
 
     override fun observeStatuses(): Flow<List<WhatsAppStatus>> {
         return statusDao.observeAll().map { entities ->
@@ -111,8 +116,11 @@ class StatusRepositoryImpl @Inject constructor(
         val contentUri = runCatching { Uri.parse(status.uriString) }.getOrNull()
             ?: return@withContext Result.failure(AppError.InvalidUrl(status.uriString))
 
-        val tempFile = File(context.cacheDir, "temp_status_${System.currentTimeMillis()}.${if (status.mediaType == StatusMediaType.VIDEO) "mp4" else "jpg"}")
-
+        val tempFile = try {
+            File.createTempFile("status_", ".tmp", context.cacheDir)
+        } catch (e: java.io.IOException) {
+            return@withContext Result.failure(AppError.FileWriteFailed(cause = e))
+        }
         try {
             // 2. Stream from SAF ContentProvider to temporary cache file
             val inputStream = context.contentResolver.openInputStream(contentUri)
@@ -127,39 +135,42 @@ class StatusRepositoryImpl @Inject constructor(
             // 3. Compute SHA-256 content hash for duplicate detection
             val fileHash = HashUtils.sha256(tempFile)
 
-            if (!overwrite) {
-                val existingHash = statusDao.getByFileHash(fileHash)
-                if (existingHash != null && existingHash.isSaved && !existingHash.savedPath.isNullOrBlank()) {
-                    tempFile.delete()
-                    return@withContext Result.success(existingHash.savedPath!!)
+            saveMutex.withLock {
+                if (!overwrite) {
+                    val existingHash = statusDao.getByFileHash(fileHash)
+                    if (existingHash != null && existingHash.isSaved && !existingHash.savedPath.isNullOrBlank()) {
+                        statusDao.markSaved(status.id, existingHash.savedPath!!, fileHash)
+                        return@withLock Result.success(existingHash.savedPath!!)
+                    }
                 }
+
+                // 4. Save to Scoped Storage MediaStore
+                val savedUri = if (status.mediaType == StatusMediaType.VIDEO) {
+                    mediaStoreManager.saveVideo(
+                        sourceFile = tempFile,
+                        fileName = status.fileName,
+                        platform = PlatformId.WHATSAPP
+                    )
+                } else {
+                    mediaStoreManager.saveImage(
+                        sourceFile = tempFile,
+                        fileName = status.fileName,
+                        platform = PlatformId.WHATSAPP
+                    )
+                }.getOrThrow()
+
+                // 5. Update status record in Room database
+                val savedPathString = savedUri.toString()
+                statusDao.markSaved(status.id, savedPathString, fileHash)
+
+                Result.success(savedPathString)
             }
-
-            // 4. Save to Scoped Storage MediaStore
-            val savedUri = if (status.mediaType == StatusMediaType.VIDEO) {
-                mediaStoreManager.saveVideo(
-                    sourceFile = tempFile,
-                    fileName = status.fileName,
-                    platform = PlatformId.WHATSAPP
-                )
-            } else {
-                mediaStoreManager.saveImage(
-                    sourceFile = tempFile,
-                    fileName = status.fileName,
-                    platform = PlatformId.WHATSAPP
-                )
-            }.getOrThrow()
-
-            tempFile.delete()
-
-            // 5. Update status record in Room database
-            val savedPathString = savedUri.toString()
-            statusDao.markSaved(status.id, savedPathString)
-
-            Result.success(savedPathString)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            tempFile.delete()
             Result.failure(AppError.FileWriteFailed(cause = e))
+        } finally {
+            tempFile.delete()
         }
     }
 }
