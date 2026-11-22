@@ -93,4 +93,20 @@ class TikTokUrlParserTest {
         }.build()
         assertEquals(canonical, TikTokUrlParser.resolveCanonicalUrl("https://vm.tiktok.com/fixture/", client))
     }
+
+    @Test
+    fun `short link resolution accepts HTTP 405 on terminal HEAD and rejects non-video pages`() = kotlinx.coroutines.runBlocking {
+        val canonical = TikTokUrlParser.buildCanonicalWatchUrl(sampleVideoId, "creator")
+        val methodNotAllowedClient = okhttp3.OkHttpClient.Builder().addInterceptor { chain ->
+            okhttp3.Response.Builder().request(chain.request().newBuilder().url(canonical).build())
+                .protocol(okhttp3.Protocol.HTTP_1_1).code(405).message("Method Not Allowed").body("".toResponseBody()).build()
+        }.build()
+        assertEquals(canonical, TikTokUrlParser.resolveCanonicalUrl("https://vm.tiktok.com/fixture/", methodNotAllowedClient))
+
+        val loginRedirectClient = okhttp3.OkHttpClient.Builder().addInterceptor { chain ->
+            okhttp3.Response.Builder().request(chain.request().newBuilder().url("https://www.tiktok.com/login").build())
+                .protocol(okhttp3.Protocol.HTTP_1_1).code(200).message("OK").body("".toResponseBody()).build()
+        }.build()
+        assertNull(TikTokUrlParser.resolveCanonicalUrl("https://vm.tiktok.com/fixture/", loginRedirectClient))
+    }
 }

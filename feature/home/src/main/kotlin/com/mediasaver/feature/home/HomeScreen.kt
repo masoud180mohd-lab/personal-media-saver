@@ -63,7 +63,6 @@ fun HomeScreen(
     modifier: Modifier = Modifier,
     initialSharedUrl: String? = null,
     onNavigateToDownloads: () -> Unit = {},
-    onNavigateToSettings: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -112,8 +111,7 @@ fun HomeScreen(
         onStartBatchDownload = { streams ->
             viewModel.startBatchDownload(streams)
             onNavigateToDownloads()
-        },
-        onNavigateToSettings = onNavigateToSettings
+        }
     )
 }
 
@@ -127,8 +125,7 @@ fun HomeScreenContent(
     onPaste: () -> Unit,
     onSelectStream: (StreamInfo) -> Unit,
     onStartDownload: (StreamInfo?) -> Unit,
-    onStartBatchDownload: (List<StreamInfo>) -> Unit,
-    onNavigateToSettings: () -> Unit = {}
+    onStartBatchDownload: (List<StreamInfo>) -> Unit
 ) {
     val isReduceMotion = rememberIsReduceMotionEnabled()
     val haptic = LocalHapticFeedback.current
@@ -183,14 +180,9 @@ fun HomeScreenContent(
                 exit = if (isReduceMotion) fadeOut() else fadeOut() + shrinkVertically()
             ) {
                 uiState.errorMessage?.let { errorMsg ->
-                    val isAuthOrSettings = errorMsg.contains("Settings", ignoreCase = true) ||
-                        errorMsg.contains("Login", ignoreCase = true)
-
                     ErrorState(
                         message = errorMsg,
-                        onRetry = { onProcessUrl() },
-                        actionLabel = if (isAuthOrSettings) "Open Settings / Login" else null,
-                        onActionClick = if (isAuthOrSettings) onNavigateToSettings else null
+                        onRetry = { onProcessUrl() }
                     )
                 }
             }

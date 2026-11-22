@@ -107,7 +107,7 @@ object TikTokUrlParser {
         try {
             client.newCall(request).execute().use { response ->
                 response.request.url.toString().takeIf {
-                    response.isSuccessful && isTikTokUrl(it) && extractVideoId(it) != null
+                    isTikTokUrl(it) && extractVideoId(it) != null
                 }
             }
         } catch (_: java.io.IOException) {

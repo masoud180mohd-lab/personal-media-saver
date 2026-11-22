@@ -6,6 +6,7 @@ import com.mediasaver.core.model.MediaInfo
 import com.mediasaver.core.model.PlatformId
 import com.mediasaver.core.model.StreamInfo
 import com.mediasaver.core.model.error.AppError
+import com.mediasaver.core.network.interceptor.PlatformWebDomain
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import android.util.Log
@@ -165,6 +166,7 @@ class InstagramAdapter @Inject constructor(
         try {
             val request = Request.Builder()
                 .url("https://www.instagram.com")
+                .tag(PlatformWebDomain::class.java, PlatformWebDomain("instagram.com"))
                 .head()
                 .header("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1")
                 .build()

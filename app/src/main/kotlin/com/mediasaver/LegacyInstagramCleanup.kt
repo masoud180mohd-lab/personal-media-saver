@@ -55,7 +55,7 @@ internal object LegacyInstagramCleanup {
             val storage = WebStorage.getInstance()
             storage.deleteAllData()
             val empty = suspendCancellableCoroutine<Boolean> { continuation ->
-                storage.getOrigins { origins -> continuation.resume(origins != null && origins.isEmpty()) }
+                storage.getOrigins { origins -> continuation.resume(origins.isNullOrEmpty()) }
             }
             if (!empty) throw IOException("Web storage cleanup is incomplete")
         }

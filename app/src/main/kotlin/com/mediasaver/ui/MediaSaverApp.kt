@@ -187,9 +187,6 @@ fun MediaSaverApp(
                             }
                             launchSingleTop = true
                         }
-                    },
-                    onNavigateToSettings = {
-                        navController.navigate(Screen.Settings.route)
                     }
                 )
             }

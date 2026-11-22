@@ -146,4 +146,24 @@ class HomeUiTest {
         composeTestRule.onNodeWithText("Awesome Video Title").performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithText("Download").performScrollTo().assertIsDisplayed().assertIsEnabled()
     }
+
+    @Test
+    fun `HomeScreenContent does not show legacy Login CTA when error mentions Login or Settings`() {
+        val message = "Please check Settings or Login status later."
+        composeTestRule.setContent {
+            HomeScreenContent(
+                uiState = HomeUiState(errorMessage = message),
+                snackbarHostState = SnackbarHostState(),
+                onUrlChange = {},
+                onProcessUrl = {},
+                onPaste = {},
+                onSelectStream = {},
+                onStartDownload = {},
+                onStartBatchDownload = {}
+            )
+        }
+
+        composeTestRule.onNodeWithText(message).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Open Settings / Login").assertDoesNotExist()
+    }
 }
