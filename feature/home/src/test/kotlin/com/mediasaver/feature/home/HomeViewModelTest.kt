@@ -39,13 +39,21 @@ class HomeViewModelTest {
         override suspend fun delete(downloadId: String) {}
         override suspend fun clearHistory() {}
     }
+    private var currentSettings = AppSettings()
+    private val settingsFlow = kotlinx.coroutines.flow.MutableStateFlow(currentSettings)
     private val settings = object : SettingsRepository {
-        override val settings = flowOf(AppSettings())
-        override suspend fun getSettings() = AppSettings()
-        override suspend fun updatePreferredQuality(quality: String) {}
+        override val settings = settingsFlow
+        override suspend fun getSettings() = currentSettings
+        override suspend fun updatePreferredQuality(quality: String) {
+            currentSettings = currentSettings.copy(preferredQuality = quality)
+            settingsFlow.value = currentSettings
+        }
         override suspend fun updateDownloadDirectoryUri(uri: String?) {}
         override suspend fun updateMaxConcurrentDownloads(limit: Int) {}
-        override suspend fun updateWifiOnlyDownload(wifiOnly: Boolean) {}
+        override suspend fun updateWifiOnlyDownload(wifiOnly: Boolean) {
+            currentSettings = currentSettings.copy(wifiOnlyDownload = wifiOnly)
+            settingsFlow.value = currentSettings
+        }
         override suspend fun updateMaxDownloadSizeMb(maxSizeMb: Int) {}
         override suspend fun updateWhatsAppStatusUri(uri: String?) {}
         override suspend fun updateWhatsAppBusinessStatusUri(uri: String?) {}
@@ -125,5 +133,30 @@ class HomeViewModelTest {
 
         assertNull(vm.uiState.value.downloadEnqueuedMessage)
         assertEquals("All slides are already queued or saved.", vm.uiState.value.errorMessage)
+    }
+
+    @Test fun `selectPreferredStream matches prefix 1080p60 MP4 prefers progressive 720p and falls back within limit`() = kotlinx.coroutines.runBlocking {
+        val updateUseCase = UpdateSettingsUseCase(settings)
+        updateUseCase.updateWifiOnlyDownload(true)
+        assertTrue(currentSettings.wifiOnlyDownload)
+
+        val progressive360 = StreamInfo("https://example/360.mp4", quality = "360p", format = "mp4", isVideoOnly = false)
+        val progressive720 = StreamInfo("https://example/720.mp4", quality = "720p", format = "mp4", isVideoOnly = false)
+        val adaptive720 = StreamInfo("https://example/720v.mp4", quality = "720p", format = "mp4", isVideoOnly = true)
+        val adaptive1080Webm = StreamInfo("https://example/1080.webm", quality = "1080p60", format = "webm", isVideoOnly = true)
+        val adaptive1080Mp4 = StreamInfo("https://example/1080.mp4", quality = "1080p60", format = "mp4", isVideoOnly = true)
+        val audio = StreamInfo("https://example/audio.m4a", quality = "128 kbps", format = "m4a", isAudioOnly = true)
+
+        updateUseCase.updatePreferredQuality("1080p")
+        val vm1080 = load(Result.success(listOf(audio, progressive360, adaptive1080Webm, adaptive1080Mp4, progressive720)))
+        assertEquals(adaptive1080Mp4, vm1080.uiState.value.selectedStream)
+
+        updateUseCase.updatePreferredQuality("720p")
+        val vm720 = load(Result.success(listOf(audio, progressive360, adaptive720, progressive720, adaptive1080Mp4)))
+        assertEquals(progressive720, vm720.uiState.value.selectedStream)
+
+        // When exact/prefix match for 480p is absent, pick highest resolution <= 480p (360p)
+        val fallback480 = vm720.selectPreferredStream(listOf(audio, adaptive1080Mp4, progressive360, progressive720), "480p")
+        assertEquals(progressive360, fallback480)
     }
 }

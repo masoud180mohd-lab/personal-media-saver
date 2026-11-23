@@ -1,10 +1,13 @@
 package com.mediasaver.core.download.queue
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import com.mediasaver.core.database.dao.DownloadDao
 import com.mediasaver.core.database.dao.StreamOptionDao
 import com.mediasaver.core.database.entity.DownloadEntity
 import com.mediasaver.core.database.entity.StreamOptionEntity
+import com.mediasaver.core.domain.repository.SettingsRepository
 import com.mediasaver.core.download.retry.RetryPolicy
 import com.mediasaver.core.download.service.DownloadService
 import com.mediasaver.core.download.worker.DownloadProgress
@@ -37,23 +40,70 @@ import javax.inject.Singleton
  * automatic backoff retries, and recovers gracefully across process termination.
  */
 @Singleton
-class DownloadQueueManager @Inject constructor(
-    @ApplicationContext private val context: Context,
+class DownloadQueueManager(
+    private val context: Context,
     private val downloadDao: DownloadDao,
     private val streamOptionDao: StreamOptionDao,
     private val downloadWorker: DownloadWorker,
     private val tempFileManager: TempFileManager,
-    private val retryPolicy: RetryPolicy
+    private val retryPolicy: RetryPolicy,
+    private val settingsRepository: SettingsRepository? = null,
+    private val isWifiConnectedProvider: () -> Boolean = { isWifiOrUnmeteredConnected(context) }
 ) {
+    @Inject
+    constructor(
+        @ApplicationContext context: Context,
+        downloadDao: DownloadDao,
+        streamOptionDao: StreamOptionDao,
+        downloadWorker: DownloadWorker,
+        tempFileManager: TempFileManager,
+        retryPolicy: RetryPolicy,
+        settingsRepository: SettingsRepository
+    ) : this(
+        context = context,
+        downloadDao = downloadDao,
+        streamOptionDao = streamOptionDao,
+        downloadWorker = downloadWorker,
+        tempFileManager = tempFileManager,
+        retryPolicy = retryPolicy,
+        settingsRepository = settingsRepository,
+        isWifiConnectedProvider = { isWifiOrUnmeteredConnected(context) }
+    )
 
     private val queueScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val queueMutex = Mutex()
     private val activeJobs = ConcurrentHashMap<String, Job>()
 
+    @Volatile
     var maxConcurrentDownloads: Int = 3
+
+    @Volatile
+    var wifiOnlyDownload: Boolean = false
 
     private var recovered = false
     private val duplicates = com.mediasaver.core.download.duplicate.DuplicateDetector(downloadDao)
+
+    init {
+        settingsRepository?.let { repo ->
+            queueScope.launch {
+                repo.settings.collect { appSettings ->
+                    val previousLimit = maxConcurrentDownloads
+                    val previousWifiOnly = wifiOnlyDownload
+                    maxConcurrentDownloads = appSettings.maxConcurrentDownloads.coerceIn(1, 5)
+                    wifiOnlyDownload = appSettings.wifiOnlyDownload
+                    if (maxConcurrentDownloads > previousLimit || (previousWifiOnly && !wifiOnlyDownload)) {
+                        processNextInQueue()
+                    }
+                }
+            }
+        }
+    }
+
+    private suspend fun syncSettingsIfAvailable() {
+        val current = settingsRepository?.getSettings() ?: return
+        maxConcurrentDownloads = current.maxConcurrentDownloads.coerceIn(1, 5)
+        wifiOnlyDownload = current.wifiOnlyDownload
+    }
 
     /**
      * Observable stream of all active (queued, downloading, muxing) tasks.
@@ -79,6 +129,10 @@ class DownloadQueueManager @Inject constructor(
         videoStream: StreamInfo,
         audioStream: StreamInfo? = null
     ) {
+        syncSettingsIfAvailable()
+        if (wifiOnlyDownload && !isWifiConnectedProvider()) {
+            throw AppError.NetworkError(userMessage = WIFI_ONLY_MESSAGE)
+        }
         performStartupRecovery()
         queueMutex.withLock {
             val itemId = videoStream.mediaIndex?.let { "${task.mediaId}#slide_${it + 1}" } ?: task.mediaId
@@ -145,6 +199,10 @@ class DownloadQueueManager @Inject constructor(
      * Manual retry is always permitted and resets the retry counter.
      */
     suspend fun retry(downloadId: String) {
+        syncSettingsIfAvailable()
+        if (wifiOnlyDownload && !isWifiConnectedProvider()) {
+            throw AppError.NetworkError(userMessage = WIFI_ONLY_MESSAGE)
+        }
         performStartupRecovery()
         queueMutex.withLock {
             downloadDao.updateRetryCount(downloadId, 0)
@@ -195,6 +253,7 @@ class DownloadQueueManager @Inject constructor(
         queueScope.launch {
             queueMutex.withLock {
                 if (!recovered) return@withLock
+                if (wifiOnlyDownload && !isWifiConnectedProvider()) return@withLock
                 val currentRunning = activeJobs.size
                 if (currentRunning >= maxConcurrentDownloads) return@withLock
 
@@ -339,5 +398,19 @@ class DownloadQueueManager @Inject constructor(
             durationSeconds = durationSeconds,
             errorMessage = errorMessage
         )
+    }
+
+    companion object {
+        internal const val WIFI_ONLY_MESSAGE =
+            "Wi-Fi Only mode is enabled. Connect to Wi-Fi or disable Wi-Fi Only in Settings."
+
+        internal fun isWifiOrUnmeteredConnected(context: Context): Boolean {
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                ?: return false
+            val activeNetwork = cm.activeNetwork ?: return false
+            val capabilities = cm.getNetworkCapabilities(activeNetwork) ?: return false
+            return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+        }
     }
 }

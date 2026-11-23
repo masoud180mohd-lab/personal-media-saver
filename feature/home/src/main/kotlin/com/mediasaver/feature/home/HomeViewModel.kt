@@ -86,9 +86,7 @@ class HomeViewModel @Inject constructor(
                 val settings = getSettingsUseCase().firstOrNull()
                 val preferredQuality = settings?.preferredQuality ?: "720p"
 
-                val chosenStream = streams.firstOrNull { it.quality.equals(preferredQuality, ignoreCase = true) }
-                    ?: streams.firstOrNull { !it.isAudioOnly }
-                    ?: streams.firstOrNull()
+                val chosenStream = selectPreferredStream(streams, preferredQuality)
 
                 _uiState.update {
                     it.copy(
@@ -191,5 +189,46 @@ class HomeViewModel @Inject constructor(
                 selectedStream = null
             )
         }
+    }
+
+    internal fun selectPreferredStream(
+        streams: List<StreamInfo>,
+        preferredQuality: String
+    ): StreamInfo? {
+        if (streams.isEmpty()) return null
+        val mediaStreams = streams.filter { !it.isAudioOnly }
+        if (mediaStreams.isEmpty()) return streams.firstOrNull()
+
+        val comparator = compareBy<StreamInfo> { !it.isVideoOnly }
+            .thenBy { it.format.equals("mp4", ignoreCase = true) }
+
+        val exactMatches = mediaStreams.filter { it.quality.equals(preferredQuality, ignoreCase = true) }
+        if (exactMatches.isNotEmpty()) {
+            return exactMatches.maxWithOrNull(comparator)
+        }
+
+        val prefixMatches = mediaStreams.filter {
+            it.quality?.startsWith(preferredQuality, ignoreCase = true) == true
+        }
+        if (prefixMatches.isNotEmpty()) {
+            return prefixMatches.maxWithOrNull(comparator)
+        }
+
+        val targetHeight = preferredQuality.takeWhile { it.isDigit() }.toIntOrNull()
+        if (targetHeight != null) {
+            val withHeights = mediaStreams.mapNotNull { stream ->
+                val height = stream.quality?.takeWhile { it.isDigit() }?.toIntOrNull()
+                if (height != null) stream to height else null
+            }
+            val withinLimit = withHeights
+                .filter { it.second <= targetHeight }
+                .maxWithOrNull(
+                    compareBy<Pair<StreamInfo, Int>> { it.second }
+                        .thenBy(comparator) { it.first }
+                )?.first
+            if (withinLimit != null) return withinLimit
+        }
+
+        return mediaStreams.firstOrNull()
     }
 }

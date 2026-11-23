@@ -130,4 +130,75 @@ class DownloadRepositoryIntegrationTest {
         assertEquals("content://gallery/item", dao.getByFileHash("computed-sha")?.savedPath)
         org.junit.Assert.assertTrue(dao.getByFileHash("computed-sha")!!.isSaved)
     }
+
+    @Test
+    fun `queue syncs concurrency and enforces wifiOnlyDownload from SettingsRepository`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val dao = appDatabase.downloadDao()
+        val tempFiles = TempFileManager(context)
+        val worker = DownloadWorker(OkHttpClient(), dao, tempFiles, MediaStoreManager(context), DefaultMuxingEngine())
+        val queueDao = object : DownloadDao by dao {
+            override suspend fun findActiveDownloads(): List<DownloadEntity> = emptyList()
+        }
+
+        val currentSettings = kotlinx.coroutines.flow.MutableStateFlow(
+            com.mediasaver.core.model.AppSettings(maxConcurrentDownloads = 5, wifiOnlyDownload = true)
+        )
+        var wifiConnected = false
+        val fakeSettingsRepo = object : com.mediasaver.core.domain.repository.SettingsRepository {
+            override val settings = currentSettings
+            override suspend fun getSettings() = currentSettings.value
+            override suspend fun updatePreferredQuality(quality: String) {}
+            override suspend fun updateDownloadDirectoryUri(uri: String?) {}
+            override suspend fun updateMaxConcurrentDownloads(limit: Int) {}
+            override suspend fun updateWifiOnlyDownload(wifiOnly: Boolean) {}
+            override suspend fun updateMaxDownloadSizeMb(maxSizeMb: Int) {}
+            override suspend fun updateWhatsAppStatusUri(uri: String?) {}
+            override suspend fun updateWhatsAppBusinessStatusUri(uri: String?) {}
+            override suspend fun updateSaveDownloadHistory(enabled: Boolean) {}
+            override suspend fun updateAutoDeleteTempFiles(enabled: Boolean) {}
+            override suspend fun updateThemeMode(themeMode: com.mediasaver.core.model.ThemeMode) {}
+            override suspend fun resetToDefaults() {}
+        }
+
+        val managedQueue = DownloadQueueManager(
+            context = context,
+            downloadDao = queueDao,
+            streamOptionDao = appDatabase.streamOptionDao(),
+            downloadWorker = worker,
+            tempFileManager = tempFiles,
+            retryPolicy = RetryPolicy(),
+            settingsRepository = fakeSettingsRepo,
+            isWifiConnectedProvider = { wifiConnected }
+        )
+
+        val task = com.mediasaver.core.model.DownloadTask(
+            id = "wifi-blocked",
+            url = "https://youtube.com/watch?v=wifi",
+            platform = com.mediasaver.core.model.PlatformId.YOUTUBE,
+            mediaId = "wifi"
+        )
+        val stream = com.mediasaver.core.model.StreamInfo("https://cdn.example/video.mp4", quality = "720p")
+
+        val enqueueBlocked = runCatching { managedQueue.enqueue(task, stream) }
+        org.junit.Assert.assertTrue(enqueueBlocked.exceptionOrNull() is com.mediasaver.core.model.error.AppError.NetworkError)
+        assertEquals(5, managedQueue.maxConcurrentDownloads)
+        org.junit.Assert.assertTrue(managedQueue.wifiOnlyDownload)
+
+        val retryBlocked = runCatching { managedQueue.retry("existing-failed") }
+        org.junit.Assert.assertTrue(retryBlocked.exceptionOrNull() is com.mediasaver.core.model.error.AppError.NetworkError)
+
+        // When Wi-Fi connects, enqueue succeeds
+        wifiConnected = true
+        managedQueue.enqueue(task, stream)
+        org.junit.Assert.assertNotNull(dao.getById("wifi-blocked"))
+
+        // Disconnecting Wi-Fi and toggling wifiOnlyDownload off also permits enqueue
+        wifiConnected = false
+        currentSettings.value = currentSettings.value.copy(maxConcurrentDownloads = 2, wifiOnlyDownload = false)
+        managedQueue.enqueue(task.copy(id = "mobile-allowed", mediaId = "mobile"), stream)
+        org.junit.Assert.assertNotNull(dao.getById("mobile-allowed"))
+        assertEquals(2, managedQueue.maxConcurrentDownloads)
+        org.junit.Assert.assertFalse(managedQueue.wifiOnlyDownload)
+    }
 }

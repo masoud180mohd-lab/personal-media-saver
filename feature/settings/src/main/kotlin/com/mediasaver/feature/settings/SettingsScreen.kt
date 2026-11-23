@@ -91,6 +91,7 @@ fun SettingsScreen(
         onUpdateThemeMode = { viewModel.updateThemeMode(it) },
         onUpdatePreferredQuality = { viewModel.updatePreferredQuality(it) },
         onUpdateMaxConcurrentDownloads = { viewModel.updateMaxConcurrentDownloads(it) },
+        onUpdateWifiOnlyDownload = { viewModel.updateWifiOnlyDownload(it) },
         onResetToDefaults = { viewModel.resetToDefaults() },
     )
 }
@@ -103,11 +104,11 @@ fun SettingsScreenContent(
     onUpdateThemeMode: (ThemeMode) -> Unit,
     onUpdatePreferredQuality: (String) -> Unit,
     onUpdateMaxConcurrentDownloads: (Int) -> Unit,
+    onUpdateWifiOnlyDownload: (Boolean) -> Unit = {},
     onResetToDefaults: () -> Unit,
 ) {
     val haptic = LocalHapticFeedback.current
     var showResetDialog by remember { mutableStateOf(false) }
-    var wifiOnlyEnabled by remember { mutableStateOf(uiState.settings.wifiOnlyDownload) }
 
     Box(modifier = modifier.fillMaxSize()) {
         Column(
@@ -208,8 +209,11 @@ fun SettingsScreenContent(
                         subtitle = "Save mobile data transfers",
                         trailingContent = {
                             Switch(
-                                checked = wifiOnlyEnabled,
-                                onCheckedChange = { wifiOnlyEnabled = it }
+                                checked = uiState.settings.wifiOnlyDownload,
+                                onCheckedChange = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    onUpdateWifiOnlyDownload(it)
+                                }
                             )
                         }
                     )

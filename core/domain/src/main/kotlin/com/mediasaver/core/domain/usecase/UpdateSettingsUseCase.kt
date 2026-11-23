@@ -22,6 +22,10 @@ class UpdateSettingsUseCase @Inject constructor(
         settingsRepository.updateMaxConcurrentDownloads(limit)
     }
 
+    suspend fun updateWifiOnlyDownload(wifiOnly: Boolean) {
+        settingsRepository.updateWifiOnlyDownload(wifiOnly)
+    }
+
     suspend fun updateDownloadDirectoryUri(uri: String?) {
         settingsRepository.updateDownloadDirectoryUri(uri)
     }

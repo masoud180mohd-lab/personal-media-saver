@@ -66,6 +66,16 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun updateWifiOnlyDownload(wifiOnly: Boolean) {
+        viewModelScope.launch {
+            try {
+                updateSettingsUseCase.updateWifiOnlyDownload(wifiOnly)
+            } catch (e: Exception) {
+                _userMessage.value = "Failed to update Wi-Fi setting: ${e.localizedMessage}"
+            }
+        }
+    }
+
     fun resetToDefaults() {
         viewModelScope.launch {
             try {
