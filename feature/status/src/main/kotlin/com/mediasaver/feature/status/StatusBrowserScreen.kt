@@ -118,10 +118,13 @@ fun StatusBrowserScreen(
         uiState = uiState,
         snackbarHostState = snackbarHostState,
         onGrantAccess = {
-            val targetPath = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                "Android/media/com.whatsapp/WhatsApp/Media/.Statuses"
-            } else {
-                "WhatsApp/Media/.Statuses"
+            val targetPath = when {
+                uiState.isBusinessWhatsApp && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R ->
+                    "Android/media/com.whatsapp.w4b/WhatsApp Business/Media/.Statuses"
+                uiState.isBusinessWhatsApp -> "WhatsApp Business/Media/.Statuses"
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.R ->
+                    "Android/media/com.whatsapp/WhatsApp/Media/.Statuses"
+                else -> "WhatsApp/Media/.Statuses"
             }
             val initialUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 DocumentsContract.buildDocumentUri(
@@ -135,6 +138,7 @@ fun StatusBrowserScreen(
         },
         onRefresh = { viewModel.scanStatuses() },
         onSaveStatus = { viewModel.saveStatus(it) },
+        onSaveStatuses = { viewModel.saveStatuses(it) },
         onSetFilter = { viewModel.setFilter(it) }
     )
 }
@@ -147,6 +151,7 @@ fun StatusBrowserScreenContent(
     onGrantAccess: () -> Unit,
     onRefresh: () -> Unit,
     onSaveStatus: (WhatsAppStatus) -> Unit,
+    onSaveStatuses: (List<WhatsAppStatus>) -> Unit = { list -> list.forEach(onSaveStatus) },
     onSetFilter: (StatusFilter) -> Unit
 ) {
     var selectedStatusIds by remember { mutableStateOf(setOf<String>()) }
@@ -334,7 +339,7 @@ fun StatusBrowserScreenContent(
                             onClick = {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                 val toSave = uiState.statuses.filter { it.id in selectedStatusIds && !it.isSaved }
-                                toSave.forEach { onSaveStatus(it) }
+                                onSaveStatuses(toSave)
                                 selectedStatusIds = emptySet()
                             },
                             shape = CircleShape,
@@ -459,22 +464,23 @@ fun StatusBrowserScreenContent(
                                 status = status,
                                 isSelected = isSelected,
                                 onClick = {
-                                    if (selectedStatusIds.isNotEmpty() || !status.isSaved) {
-                                        // Toggle selection
+                                    if (!status.isSaved) {
+                                        // Toggle selection only for unsaved statuses
                                         selectedStatusIds = if (isSelected) {
                                             selectedStatusIds - status.id
                                         } else {
                                             selectedStatusIds + status.id
                                         }
-                                    } else {
-                                        // Open media directly
+                                    } else if (selectedStatusIds.isEmpty()) {
+                                        // Open saved media cleanly via its persisted MediaStore URI when available
                                         try {
+                                            val targetUri = Uri.parse(status.savedPath?.takeIf { it.isNotBlank() } ?: status.uriString)
+                                            val mimeType = if (status.mediaType == StatusMediaType.VIDEO) "video/mp4" else "image/*"
                                             val intent = Intent(Intent.ACTION_VIEW).apply {
-                                                val mimeType = if (status.mediaType == StatusMediaType.VIDEO) "video/*" else "image/*"
-                                                setDataAndType(Uri.parse(status.uriString), mimeType)
+                                                setDataAndType(targetUri, mimeType)
                                                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                             }
-                                            context.startActivity(intent)
+                                            context.startActivity(Intent.createChooser(intent, "Open status"))
                                         } catch (_: Exception) {}
                                     }
                                 }

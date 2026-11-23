@@ -39,7 +39,9 @@
 
 # Rhino / Javascript interpreter if loaded dynamically by NewPipe Extractor
 -dontwarn org.mozilla.javascript.**
+-dontwarn javax.script.**
 -keep class org.mozilla.javascript.** { *; }
+-keep class com.grack.nanojson.** { *; }
 
 # ------------------------------------------------------------------------------
 # 4. FFmpegKit & JNI Native Boundaries

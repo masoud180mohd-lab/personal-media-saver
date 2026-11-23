@@ -77,7 +77,7 @@ fun StatusCard(
             // Thumbnail image with shimmer placeholder
             SubcomposeAsyncImage(
                 model = ImageRequest.Builder(LocalContext.current)
-                    .data(Uri.parse(status.uriString))
+                    .data(Uri.parse(status.savedPath?.takeIf { it.isNotBlank() } ?: status.uriString))
                     .crossfade(true)
                     .build(),
                 contentDescription = status.fileName,

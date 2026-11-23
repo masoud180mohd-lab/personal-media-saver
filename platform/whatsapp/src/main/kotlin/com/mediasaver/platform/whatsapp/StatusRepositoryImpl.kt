@@ -2,7 +2,6 @@ package com.mediasaver.platform.whatsapp
 
 import android.content.Context
 import android.net.Uri
-import android.util.Log
 import com.mediasaver.core.common.HashUtils
 import com.mediasaver.core.database.dao.WhatsAppStatusDao
 import com.mediasaver.core.domain.repository.SettingsRepository
@@ -49,25 +48,10 @@ class StatusRepositoryImpl @Inject constructor(
     override suspend fun isAccessGranted(isBusiness: Boolean): Boolean = withContext(Dispatchers.IO) {
         val settings = settingsRepository.getSettings()
         val uriString = if (isBusiness) settings.whatsappBusinessStatusUri else settings.whatsappStatusUri
-        Log.d("StatusRepo", "isAccessGranted: isBusiness=$isBusiness, uriString=$uriString")
-        if (uriString.isNullOrBlank()) {
-            Log.d("StatusRepo", "isAccessGranted: no URI saved, returning false")
-            return@withContext false
-        }
+        if (uriString.isNullOrBlank()) return@withContext false
 
         val uri = runCatching { Uri.parse(uriString) }.getOrNull()
-        val hasPerm = WhatsAppSafHelper.hasPersistedPermission(context.contentResolver, uri)
-        Log.d("StatusRepo", "isAccessGranted: hasPersistedPermission=$hasPerm for uri=$uri")
-        
-        // If persisted permission check fails, also check if the URI is still in the persisted list
-        if (!hasPerm && uri != null) {
-            val allPermissions = context.contentResolver.persistedUriPermissions
-            Log.d("StatusRepo", "All persisted URIs (${allPermissions.size}):")
-            allPermissions.forEach {
-                Log.d("StatusRepo", "  - ${it.uri} (read=${it.isReadPermission}, write=${it.isWritePermission})")
-            }
-        }
-        hasPerm
+        WhatsAppSafHelper.hasPersistedPermission(context.contentResolver, uri)
     }
 
     override suspend fun scanStatuses(isBusiness: Boolean): Result<List<WhatsAppStatus>> = withContext(Dispatchers.IO) {
@@ -83,15 +67,12 @@ class StatusRepositoryImpl @Inject constructor(
             ?: return@withContext Result.failure(AppError.InvalidUrl(uriString))
 
         if (!WhatsAppSafHelper.hasPersistedPermission(context.contentResolver, treeUri)) {
-            Log.w("StatusRepo", "scanStatuses: permission expired for $treeUri")
             return@withContext Result.failure(
                 AppError.PermissionDenied("Folder access permission has expired or was revoked.")
             )
         }
 
-        Log.d("StatusRepo", "scanStatuses: scanning directory $treeUri")
         val scannedItems = scanner.scanDirectory(treeUri)
-        Log.d("StatusRepo", "scanStatuses: found ${scannedItems.size} items")
         val enrichedList = mutableListOf<WhatsAppStatus>()
 
         for (item in scannedItems) {
@@ -102,6 +83,13 @@ class StatusRepositoryImpl @Inject constructor(
                 statusDao.insert(mapper.toEntity(item))
                 enrichedList.add(item)
             }
+        }
+
+        val activeUris = scannedItems.map { it.uriString }
+        if (activeUris.isEmpty()) {
+            statusDao.deleteAllUnsaved()
+        } else {
+            statusDao.deleteUnsavedNotIn(activeUris)
         }
 
         Result.success(enrichedList)
@@ -152,10 +140,16 @@ class StatusRepositoryImpl @Inject constructor(
                         platform = PlatformId.WHATSAPP
                     )
                 } else {
+                    val imageMime = when (status.fileName.substringAfterLast('.', "").lowercase()) {
+                        "png" -> "image/png"
+                        "webp" -> "image/webp"
+                        else -> "image/jpeg"
+                    }
                     mediaStoreManager.saveImage(
                         sourceFile = tempFile,
                         fileName = status.fileName,
-                        platform = PlatformId.WHATSAPP
+                        platform = PlatformId.WHATSAPP,
+                        mimeType = imageMime
                     )
                 }.getOrThrow()
 

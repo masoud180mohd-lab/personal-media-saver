@@ -100,15 +100,37 @@ class StatusViewModel @Inject constructor(
         checkPermissionAndScan()
     }
 
-    fun saveStatus(status: WhatsAppStatus) {
+    fun saveStatus(status: WhatsAppStatus) = saveStatuses(listOf(status))
+
+    fun saveStatuses(statuses: List<WhatsAppStatus>) {
+        val toSave = statuses.filter { !it.isSaved }
+        if (toSave.isEmpty()) {
+            _userMessage.value = "Selected statuses are already saved."
+            return
+        }
         viewModelScope.launch {
-            _savingStatusId.value = status.id
-            val result = saveStatusUseCase(status)
-            _savingStatusId.value = null
-            result.onSuccess {
-                _userMessage.value = "Status saved to gallery!"
-            }.onFailure { error ->
-                _userMessage.value = "Failed to save status: ${error.localizedMessage}"
+            var savedCount = 0
+            var failedCount = 0
+            var firstError: String? = null
+            for (status in toSave) {
+                _savingStatusId.value = status.id
+                val result = try {
+                    saveStatusUseCase(status)
+                } finally {
+                    _savingStatusId.value = null
+                }
+                result.onSuccess {
+                    savedCount++
+                }.onFailure { error ->
+                    failedCount++
+                    if (firstError == null) firstError = error.localizedMessage
+                }
+            }
+            _userMessage.value = when {
+                failedCount == 0 && savedCount == 1 -> "Status saved to gallery!"
+                failedCount == 0 -> "Saved $savedCount statuses to gallery!"
+                savedCount > 0 -> "Saved $savedCount of ${toSave.size} statuses ($failedCount failed)"
+                else -> "Failed to save status: ${firstError ?: "Unknown error"}"
             }
         }
     }

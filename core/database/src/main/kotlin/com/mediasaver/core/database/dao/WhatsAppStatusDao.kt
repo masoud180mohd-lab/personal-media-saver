@@ -23,7 +23,7 @@ interface WhatsAppStatusDao {
     @Upsert
     suspend fun upsert(status: WhatsAppStatusEntity)
 
-    @Query("SELECT * FROM whatsapp_statuses ORDER BY discoveredAt DESC")
+    @Query("SELECT * FROM whatsapp_statuses ORDER BY lastModified DESC")
     fun observeAll(): Flow<List<WhatsAppStatusEntity>>
 
     @Query("SELECT * FROM whatsapp_statuses WHERE originalUri = :originalUri LIMIT 1")
@@ -34,6 +34,12 @@ interface WhatsAppStatusDao {
 
     @Query("UPDATE whatsapp_statuses SET isSaved = 1, savedPath = :savedPath, fileHash = :fileHash WHERE id = :id")
     suspend fun markSaved(id: String, savedPath: String, fileHash: String)
+
+    @Query("DELETE FROM whatsapp_statuses WHERE isSaved = 0 AND originalUri NOT IN (:activeUris)")
+    suspend fun deleteUnsavedNotIn(activeUris: List<String>)
+
+    @Query("DELETE FROM whatsapp_statuses WHERE isSaved = 0")
+    suspend fun deleteAllUnsaved()
 
     @Query("DELETE FROM whatsapp_statuses")
     suspend fun deleteAll()

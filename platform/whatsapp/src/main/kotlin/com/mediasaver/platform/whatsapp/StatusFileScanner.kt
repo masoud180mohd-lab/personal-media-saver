@@ -20,7 +20,7 @@ class StatusFileScanner @Inject constructor(
 ) {
 
     companion object {
-        private val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png")
+        private val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "webp")
         private val VIDEO_EXTENSIONS = setOf("mp4")
     }
 
