@@ -63,6 +63,7 @@ import com.mediasaver.core.ui.util.rememberIsReduceMotionEnabled
 fun HomeScreen(
     modifier: Modifier = Modifier,
     initialSharedUrl: String? = null,
+    onSharedUrlConsumed: () -> Unit = {},
     onNavigateToDownloads: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel()
 ) {
@@ -75,6 +76,7 @@ fun HomeScreen(
         if (!initialSharedUrl.isNullOrBlank()) {
             viewModel.onUrlChange(initialSharedUrl)
             viewModel.processUrl(initialSharedUrl)
+            onSharedUrlConsumed()
         }
     }
 

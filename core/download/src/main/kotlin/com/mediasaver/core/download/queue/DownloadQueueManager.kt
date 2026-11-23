@@ -13,6 +13,7 @@ import com.mediasaver.core.model.DownloadStatus
 import com.mediasaver.core.model.DownloadTask
 import com.mediasaver.core.model.PlatformId
 import com.mediasaver.core.model.StreamInfo
+import com.mediasaver.core.model.error.AppError
 import com.mediasaver.core.storage.TempFileManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
@@ -82,7 +83,7 @@ class DownloadQueueManager @Inject constructor(
         queueMutex.withLock {
             val itemId = videoStream.mediaIndex?.let { "${task.mediaId}#slide_${it + 1}" } ?: task.mediaId
             val existing = duplicates.checkBeforeDownload(task.url, task.platform, itemId)
-            if (existing.isDuplicate) throw IllegalStateException("This item is already queued or saved.")
+            if (existing.isDuplicate) throw AppError.DuplicateDownload()
             val entity = task.toEntity().copy(mediaId = itemId, status = DownloadStatus.QUEUED.name)
 
             val streamEntities = mutableListOf<StreamOptionEntity>()
@@ -309,7 +310,8 @@ class DownloadQueueManager @Inject constructor(
             createdAt = createdAt,
             updatedAt = updatedAt,
             completedAt = completedAt,
-            durationSeconds = durationSeconds
+            durationSeconds = durationSeconds,
+            errorMessage = errorMessage
         )
     }
 
@@ -334,7 +336,8 @@ class DownloadQueueManager @Inject constructor(
             createdAt = createdAt,
             updatedAt = updatedAt,
             completedAt = completedAt,
-            durationSeconds = durationSeconds
+            durationSeconds = durationSeconds,
+            errorMessage = errorMessage
         )
     }
 }

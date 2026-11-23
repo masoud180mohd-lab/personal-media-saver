@@ -12,6 +12,7 @@ import com.mediasaver.core.model.DownloadTask
 import com.mediasaver.core.model.PlatformId
 import com.mediasaver.core.model.companionAudio
 import com.mediasaver.core.model.StreamInfo
+import com.mediasaver.core.model.error.AppError
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -125,18 +126,47 @@ class HomeViewModel @Inject constructor(
         _uiState.update { it.copy(isEnqueuing = true, errorMessage = null) }
         viewModelScope.launch {
             try {
+                var enqueuedCount = 0
+                var skippedDuplicates = 0
+                var firstError: Exception? = null
                 for (requested in streams) {
-                    val audio = if (requested.isVideoOnly) requested.companionAudio(state.availableStreams) else null
-                    val primary = if (requested.isVideoOnly && audio == null)
-                        state.availableStreams.firstOrNull { it.isProgressive } ?: error("No compatible audio stream is available.")
-                        else requested
-                    val task = DownloadTask(id = UUID.randomUUID().toString(), url = media.sourceUrl,
-                        platform = media.platform, mediaId = media.id, title = media.title, thumbnailUrl = primary.thumbnailUrl ?: media.thumbnailUrl,
-                        status = DownloadStatus.QUEUED, selectedQuality = primary.quality, selectedFormat = primary.format,
-                        totalBytes = primary.fileSize, durationSeconds = media.durationSeconds)
-                    enqueueDownloadUseCase(task, primary, audio)
+                    try {
+                        val audio = if (requested.isVideoOnly) requested.companionAudio(state.availableStreams) else null
+                        val primary = if (requested.isVideoOnly && audio == null)
+                            state.availableStreams.firstOrNull { it.isProgressive } ?: error("No compatible audio stream is available.")
+                            else requested
+                        val task = DownloadTask(id = UUID.randomUUID().toString(), url = media.sourceUrl,
+                            platform = media.platform, mediaId = media.id, title = media.title, thumbnailUrl = primary.thumbnailUrl ?: media.thumbnailUrl,
+                            status = DownloadStatus.QUEUED, selectedQuality = primary.quality, selectedFormat = primary.format,
+                            mimeType = primary.mimeType, totalBytes = primary.fileSize, durationSeconds = media.durationSeconds)
+                        enqueueDownloadUseCase(task, primary, audio)
+                        enqueuedCount++
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: AppError.DuplicateDownload) {
+                        skippedDuplicates++
+                    } catch (e: Exception) {
+                        if (streams.size == 1) throw e
+                        if (firstError == null) firstError = e
+                    }
                 }
-                _uiState.update { it.copy(isEnqueuing = false, downloadEnqueuedMessage = "Download queued") }
+                when {
+                    enqueuedCount > 0 -> {
+                        val msg = when {
+                            skippedDuplicates > 0 -> "Queued $enqueuedCount items ($skippedDuplicates already saved)"
+                            enqueuedCount > 1 -> "Queued $enqueuedCount downloads"
+                            else -> "Download queued"
+                        }
+                        _uiState.update { it.copy(isEnqueuing = false, downloadEnqueuedMessage = msg, errorMessage = null) }
+                    }
+                    skippedDuplicates > 0 -> {
+                        val msg = if (streams.size > 1) "All slides are already queued or saved." else "This item is already queued or saved."
+                        _uiState.update { it.copy(isEnqueuing = false, errorMessage = msg) }
+                    }
+                    else -> {
+                        _uiState.update { it.copy(isEnqueuing = false, errorMessage = firstError?.localizedMessage ?: "Failed to queue download.") }
+                    }
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

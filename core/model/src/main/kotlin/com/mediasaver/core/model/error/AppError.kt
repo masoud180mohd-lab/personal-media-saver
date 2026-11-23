@@ -78,6 +78,10 @@ sealed class AppError(
         override val userMessage: String = "Failed to combine audio and video streams into final MP4 container."
     ) : AppError(userMessage, cause)
 
+    data class DuplicateDownload(
+        override val userMessage: String = "This item is already queued or saved."
+    ) : AppError(userMessage)
+
     data class Unknown(
         override val cause: Throwable? = null,
         override val userMessage: String = "An unexpected error occurred: ${cause?.message ?: "Unknown error"}"

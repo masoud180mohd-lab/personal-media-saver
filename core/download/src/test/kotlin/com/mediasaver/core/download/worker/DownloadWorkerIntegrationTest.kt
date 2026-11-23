@@ -213,7 +213,11 @@ class DownloadWorkerIntegrationTest {
             assertEquals(expected.toString(), path)
             org.junit.Assert.assertArrayEquals(data, sink.toByteArray())
             assertEquals(data.size.toLong(), appDatabase.downloadDao().getById(id)?.downloadedBytes)
-            if (index == 0) assertEquals(path, transfer("copy", jpeg, "image/jpeg", "jpg").getOrThrow())
+            assertEquals(listOf("image/jpeg", "audio/mp4", "audio/mpeg")[index], appDatabase.downloadDao().getById(id)?.mimeType)
+            if (index == 0) {
+                assertEquals(path, transfer("copy", jpeg, "image/jpeg", "jpg").getOrThrow())
+                assertEquals("image/jpeg", appDatabase.downloadDao().getById("copy")?.mimeType)
+            }
         }
     }
 
@@ -246,5 +250,53 @@ class DownloadWorkerIntegrationTest {
 
         val spoofError = transfer("spoof", mp4, "text/html; charset=utf-8", "mp4", false).exceptionOrNull()
         assertTrue(spoofError is com.mediasaver.core.model.error.AppError.DownloadFailed)
+    }
+
+    @Test fun `YouTube 403 non-ranged GET falls back to bounded 1MB Range chunks`() = runTest {
+        val resolver = ApplicationProvider.getApplicationContext<Context>().contentResolver
+        val videos = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val expected = ContentUris.withAppendedId(videos, 1L)
+        val sink = ByteArrayOutputStream()
+        shadowOf(resolver).registerOutputStream(expected, sink)
+
+        val payload = ByteArray(1_100_000) { index -> (index % 251).toByte() }
+        val header = byteArrayOf(0, 0, 0, 20) + "ftypisom".toByteArray()
+        System.arraycopy(header, 0, payload, 0, header.size)
+
+        val rangeRequests = mutableListOf<String?>()
+        mockWebServer.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+            override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse {
+                val range = request.getHeader("Range")
+                rangeRequests += range
+                if (range == null) return MockResponse().setResponseCode(403)
+                val spec = range.removePrefix("bytes=").split("-")
+                val start = spec[0].toInt()
+                val end = minOf(spec[1].toInt(), payload.size - 1)
+                val slice = payload.copyOfRange(start, end + 1)
+                return MockResponse()
+                    .setResponseCode(206)
+                    .setHeader("Content-Type", "video/mp4")
+                    .setHeader("Content-Range", "bytes $start-$end/${payload.size}")
+                    .setBody(okio.Buffer().write(slice))
+            }
+        }
+
+        val url = mockWebServer.url("/videoplayback?clen=${payload.size}&c=ANDROID")
+            .newBuilder().host("rr1---sn.googlevideo.com").build().toString()
+        val id = "yt-range"
+        appDatabase.downloadDao().insert(
+            com.mediasaver.core.database.entity.DownloadEntity(
+                id = id, url = url, platform = "YOUTUBE", mediaId = id, status = "QUEUED"
+            )
+        )
+
+        val path = downloadWorker.executeDownload(
+            id, "yt_test.mp4", PlatformId.YOUTUBE,
+            StreamInfo(url, quality = "360p", format = "mp4", mimeType = "video/mp4")
+        ).getOrThrow()
+
+        assertEquals(expected.toString(), path)
+        org.junit.Assert.assertArrayEquals(payload, sink.toByteArray())
+        assertEquals(listOf(null, "bytes=0-1048575", "bytes=1048576-1099999"), rangeRequests)
     }
 }

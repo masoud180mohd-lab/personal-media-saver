@@ -96,7 +96,8 @@ class DownloadRepositoryImpl @Inject constructor(
             createdAt = createdAt,
             updatedAt = updatedAt,
             completedAt = completedAt,
-            durationSeconds = durationSeconds
+            durationSeconds = durationSeconds,
+            errorMessage = errorMessage
         )
     }
 }

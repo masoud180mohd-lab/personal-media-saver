@@ -96,4 +96,52 @@ class InstagramAdapterTest {
         assertEquals("https://cdninstagram.com/hd.mp4", streams.single().url)
         assertEquals("https://cdninstagram.com/poster.jpg", streams.single().thumbnailUrl)
     }
+
+    @Test fun `embed TimeSlice ServerJS contextJSON resolves playable Reel MP4`() = runBlocking {
+        val inner = """{"context":{"type":"GraphVideo","shortcode":"abc"},"gql_data":{"shortcode_media":{"__typename":"GraphVideo","id":"123","shortcode":"abc","is_video":true,"video_duration":15.5,"display_url":"https://instagram.fznz1-1.fna.fbcdn.net/cover.jpg","video_url":"https://instagram.fznz1-1.fna.fbcdn.net/video.mp4"}}}"""
+        val encoded = org.json.JSONObject.quote(inner)
+        val html = """<script>requireLazy(["TimeSliceImpl","ServerJS"],function(a,b){var s=(new ServerJS());s.handle({"define":[["Polaris",[],{"contextJSON":$encoded}]]});});/*{"PolarisEmbedSidecarEntrypoint.react":{"r":["+FIm6WZ"]}}*/</script>$cover"""
+        val streams = adapter(200 to html).resolveStreams("abc", reel).getOrThrow()
+        assertEquals("https://instagram.fznz1-1.fna.fbcdn.net/video.mp4", streams.single().url)
+        assertEquals("https://instagram.fznz1-1.fna.fbcdn.net/cover.jpg", streams.single().thumbnailUrl)
+    }
+
+    @Test fun `EmbedSidecar shell without slides falls back to subsequent tier carousel_media`() = runBlocking {
+        val shell = """<div class="EmbedSidecar">$cover</div>"""
+        val ssr = """<script type="application/json">{"shortcode":"abc","carousel_media":[
+            {"image_versions2":{"candidates":[{"url":"https://instagram.fznz1-1.fna.fbcdn.net/s0.jpg"}]}},
+            {"image_versions2":{"candidates":[{"url":"https://instagram.fznz1-1.fna.fbcdn.net/s1.jpg"}]}}
+        ]}</script>"""
+        val slides = adapter(200 to shell, 200 to ssr).resolveStreams("abc", post).getOrThrow()
+        assertEquals(listOf(0, 1), slides.map { it.mediaIndex })
+        assertEquals("https://instagram.fznz1-1.fna.fbcdn.net/s0.jpg", slides[0].url)
+        assertEquals("https://instagram.fznz1-1.fna.fbcdn.net/s1.jpg", slides[1].url)
+    }
+
+    @Test fun `Relay SSR xig_polaris_media carousel resolves all slides without candidate dimensions`() = runBlocking {
+        val mediaObj = org.json.JSONObject("""{
+            "code":"abc",
+            "carousel_media":[
+                {"__typename":"XIGPolarisImageMedia","image_versions2":{"candidates":[
+                    {"url":"https://instagram.fznz1-1.fna.fbcdn.net/s0.jpg?stp=dst-jpg_e35_tt6"},
+                    {"url":"https://instagram.fznz1-1.fna.fbcdn.net/s0_small.jpg"}
+                ]}},
+                {"__typename":"XIGPolarisImageMedia","image_versions2":{"candidates":[
+                    {"url":"https://instagram.fznz1-1.fna.fbcdn.net/s1.jpg?stp=dst-jpg_e35_tt6"}
+                ]}}
+            ]
+        }""")
+        val innerCache = org.json.JSONObject().put("__bbox", org.json.JSONObject().put("result",
+            org.json.JSONObject().put("data", org.json.JSONObject().put("xig_polaris_media",
+                org.json.JSONObject().put("if_not_gated_logged_out", mediaObj)))))
+        val outerBox = org.json.JSONObject().put("__bbox", org.json.JSONObject().put("require",
+            org.json.JSONArray().put(org.json.JSONArray(listOf("RelayPrefetchedStreamCache", "next", org.json.JSONArray(), innerCache)))))
+        val rootJson = org.json.JSONObject().put("require",
+            org.json.JSONArray().put(org.json.JSONArray(listOf("ScheduledServerJS", "handle", null, org.json.JSONArray().put(outerBox)))))
+        val ssr = """<script type="application/json">$rootJson</script>"""
+        val slides = adapter(200 to cover, 200 to ssr).resolveStreams("abc", post).getOrThrow()
+        assertEquals(listOf(0, 1), slides.map { it.mediaIndex })
+        assertEquals("https://instagram.fznz1-1.fna.fbcdn.net/s0.jpg?stp=dst-jpg_e35_tt6", slides[0].url)
+        assertEquals("https://instagram.fznz1-1.fna.fbcdn.net/s1.jpg?stp=dst-jpg_e35_tt6", slides[1].url)
+    }
 }

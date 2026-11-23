@@ -4,8 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mediasaver.core.domain.usecase.CancelDownloadUseCase
 import com.mediasaver.core.domain.usecase.DeleteDownloadUseCase
-import com.mediasaver.core.domain.usecase.GetActiveDownloadsUseCase
 import com.mediasaver.core.domain.usecase.GetDownloadProgressUseCase
+import com.mediasaver.core.domain.usecase.GetQueueDownloadsUseCase
 import com.mediasaver.core.domain.usecase.RetryDownloadUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,7 +20,7 @@ import javax.inject.Inject
 
 @HiltViewModel
 class DownloadViewModel @Inject constructor(
-    private val getActiveDownloadsUseCase: GetActiveDownloadsUseCase,
+    private val getQueueDownloadsUseCase: GetQueueDownloadsUseCase,
     private val getDownloadProgressUseCase: GetDownloadProgressUseCase,
     private val cancelDownloadUseCase: CancelDownloadUseCase,
     private val retryDownloadUseCase: RetryDownloadUseCase,
@@ -31,12 +31,12 @@ class DownloadViewModel @Inject constructor(
     private val _userMessage = MutableStateFlow<String?>(null)
 
     val uiState: StateFlow<DownloadUiState> = combine(
-        getActiveDownloadsUseCase(),
+        getQueueDownloadsUseCase(),
         _liveProgress,
         _userMessage
-    ) { activeTasks, progressMap, message ->
+    ) { queueTasks, progressMap, message ->
         DownloadUiState(
-            activeTasks = activeTasks,
+            activeTasks = queueTasks,
             liveProgressMap = progressMap,
             isLoading = false,
             userMessage = message

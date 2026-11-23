@@ -51,6 +51,7 @@ import com.mediasaver.ui.navigation.Screen
 fun MediaSaverApp(
     sharedUrl: String?,
     getActiveDownloadsUseCase: GetActiveDownloadsUseCase,
+    onSharedUrlConsumed: () -> Unit = {},
     navController: NavHostController = rememberNavController()
 ) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -180,6 +181,7 @@ fun MediaSaverApp(
             composable(Screen.Home.route) {
                 HomeScreen(
                     initialSharedUrl = sharedUrl,
+                    onSharedUrlConsumed = onSharedUrlConsumed,
                     onNavigateToDownloads = {
                         navController.navigate(Screen.Downloads.route) {
                             popUpTo(navController.graph.findStartDestination().id) {

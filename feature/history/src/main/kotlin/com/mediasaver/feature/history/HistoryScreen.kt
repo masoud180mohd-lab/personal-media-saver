@@ -431,6 +431,34 @@ private fun getDayHeader(timestamp: Long): String {
     return sdf.format(Date(timestamp))
 }
 
+internal fun resolveMediaMimeType(context: Context, uri: Uri, task: DownloadTask): String {
+    task.mimeType?.takeIf { it.isNotBlank() }?.let { return it }
+    if (uri.scheme == "content") {
+        runCatching { context.contentResolver.getType(uri) }.getOrNull()?.takeIf { it.isNotBlank() }?.let { return it }
+    }
+    val ext = task.selectedFormat?.lowercase()?.trim()?.takeIf { it.isNotBlank() }
+        ?: task.filePath?.takeUnless { it.startsWith("content://") }?.let { File(it).extension.lowercase().trim() }
+    when (ext) {
+        "jpg", "jpeg" -> return "image/jpeg"
+        "png" -> return "image/png"
+        "webp" -> return "image/webp"
+        "gif" -> return "image/gif"
+        "m4a" -> return "audio/mp4"
+        "mp3" -> return "audio/mpeg"
+        "aac" -> return "audio/aac"
+        "ogg" -> return "audio/ogg"
+        "mp4", "mpeg-4" -> return "video/mp4"
+        "webm" -> return "video/webm"
+    }
+    val path = task.filePath.orEmpty()
+    return when {
+        "/images/" in path -> "image/*"
+        "/audio/" in path -> "audio/*"
+        "/video/" in path -> "video/*"
+        else -> "*/*"
+    }
+}
+
 private fun openMedia(context: Context, task: DownloadTask) {
     val path = task.filePath ?: return
     try {
@@ -446,7 +474,7 @@ private fun openMedia(context: Context, task: DownloadTask) {
         }
 
         val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, task.mimeType ?: "video/*")
+            setDataAndType(uri, resolveMediaMimeType(context, uri, task))
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
@@ -469,7 +497,7 @@ private fun shareMedia(context: Context, task: DownloadTask) {
         }
 
         val shareIntent = Intent(Intent.ACTION_SEND).apply {
-            type = task.mimeType ?: "video/*"
+            type = resolveMediaMimeType(context, uri, task)
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }

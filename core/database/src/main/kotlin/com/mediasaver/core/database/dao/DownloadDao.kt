@@ -63,6 +63,7 @@ interface DownloadDao {
         SET status = 'COMPLETED', 
             filePath = :filePath, 
             fileHash = :fileHash, 
+            mimeType = COALESCE(:mimeType, mimeType), 
             completedAt = :completedAt, 
             updatedAt = :updatedAt 
         WHERE id = :id
@@ -72,6 +73,7 @@ interface DownloadDao {
         id: String,
         filePath: String,
         fileHash: String? = null,
+        mimeType: String? = null,
         completedAt: Long = System.currentTimeMillis(),
         updatedAt: Long = System.currentTimeMillis()
     )
@@ -97,9 +99,15 @@ interface DownloadDao {
     suspend fun markCancelled(id: String, updatedAt: Long = System.currentTimeMillis())
 
     @Transaction
-    suspend fun completeWithProgress(id: String, path: String, hash: String, size: Long) {
+    suspend fun completeWithProgress(
+        id: String,
+        path: String,
+        hash: String,
+        size: Long,
+        mimeType: String? = null
+    ) {
         updateProgress(id, size, size)
-        markCompleted(id, path, hash)
+        markCompleted(id, path, hash, mimeType)
     }
 
     @Query("DELETE FROM downloads WHERE id = :id")

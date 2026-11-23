@@ -18,7 +18,9 @@ class YouTubeStreamMapper @Inject constructor() {
      * Converts a NewPipe progressive VideoStream (containing audio & video) to domain StreamInfo.
      */
     fun mapProgressiveStream(stream: VideoStream): StreamInfo {
-        val formatName = stream.format?.name?.lowercase() ?: "mp4"
+        val formatName = stream.format?.suffix?.lowercase()?.ifBlank { null }
+            ?: stream.format?.name?.lowercase()
+            ?: "mp4"
         val cleanQuality = normalizeResolution(stream.resolution)
 
         return StreamInfo(
@@ -38,7 +40,9 @@ class YouTubeStreamMapper @Inject constructor() {
      * Converts a NewPipe adaptive VideoStream (video-only, no audio) to domain StreamInfo.
      */
     fun mapAdaptiveVideoStream(stream: VideoStream): StreamInfo {
-        val formatName = stream.format?.name?.lowercase() ?: "mp4"
+        val formatName = stream.format?.suffix?.lowercase()?.ifBlank { null }
+            ?: stream.format?.name?.lowercase()
+            ?: "mp4"
         val cleanQuality = normalizeResolution(stream.resolution)
 
         return StreamInfo(
@@ -58,7 +62,9 @@ class YouTubeStreamMapper @Inject constructor() {
      * Converts a NewPipe AudioStream (audio-only) to domain StreamInfo.
      */
     fun mapAudioStream(stream: AudioStream): StreamInfo {
-        val formatName = stream.format?.name?.lowercase() ?: "m4a"
+        val formatName = stream.format?.suffix?.lowercase()?.ifBlank { null }
+            ?: stream.format?.name?.lowercase()
+            ?: "m4a"
         val bitrateKbps = if (stream.averageBitrate > 0) "${stream.averageBitrate} kbps" else "Audio"
 
         return StreamInfo(

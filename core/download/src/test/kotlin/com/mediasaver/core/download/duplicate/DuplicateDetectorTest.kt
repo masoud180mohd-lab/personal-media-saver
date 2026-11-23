@@ -164,7 +164,7 @@ class DuplicateDetectorTest {
         override fun observeAll(): Flow<List<DownloadEntity>> = emptyFlow()
         override suspend fun updateStatus(id: String, status: String, updatedAt: Long) {}
         override suspend fun updateProgress(id: String, downloadedBytes: Long, totalBytes: Long?, updatedAt: Long) {}
-        override suspend fun markCompleted(id: String, filePath: String, fileHash: String?, completedAt: Long, updatedAt: Long) {}
+        override suspend fun markCompleted(id: String, filePath: String, fileHash: String?, mimeType: String?, completedAt: Long, updatedAt: Long) {}
         override suspend fun markFailed(id: String, errorType: String?, errorMessage: String?, updatedAt: Long) {}
         override suspend fun markCancelled(id: String, updatedAt: Long) {}
         override suspend fun deleteById(id: String) { items.removeAll { it.id == id } }

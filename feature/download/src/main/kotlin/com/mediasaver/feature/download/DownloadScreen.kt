@@ -64,7 +64,8 @@ fun DownloadScreen(
         uiState = uiState,
         snackbarHostState = snackbarHostState,
         onCancelDownload = { viewModel.cancelDownload(it) },
-        onRetryDownload = { viewModel.retryDownload(it) }
+        onRetryDownload = { viewModel.retryDownload(it) },
+        onRemoveDownload = { viewModel.removeDownload(it) }
     )
 }
 
@@ -74,7 +75,8 @@ fun DownloadScreenContent(
     uiState: DownloadUiState,
     snackbarHostState: SnackbarHostState,
     onCancelDownload: (String) -> Unit,
-    onRetryDownload: (String) -> Unit
+    onRetryDownload: (String) -> Unit,
+    onRemoveDownload: (String) -> Unit = {}
 ) {
     Box(modifier = modifier.fillMaxSize()) {
         Column(
@@ -136,44 +138,46 @@ fun DownloadScreenContent(
                 )
             } else {
                 // Sticky summary row when active: total speed + active count chips
-                val totalSpeed = uiState.liveProgressMap.values.sumOf { it.speedBytesPerSec }
-                val downloadingCount = uiState.activeTasks.count { it.status == DownloadStatus.DOWNLOADING }
+                if (uiState.activeTasks.any { it.status.isActive }) {
+                    val totalSpeed = uiState.liveProgressMap.values.sumOf { it.speedBytesPerSec }
+                    val downloadingCount = uiState.activeTasks.count { it.status == DownloadStatus.DOWNLOADING }
 
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Surface(
-                        shape = ChipShape,
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Total Speed: ${formatSpeed(totalSpeed)}",
-                            style = MaterialTheme.typography.labelMedium.copy(
-                                fontFeatureSettings = "tnum"
-                            ),
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
+                        Surface(
+                            shape = ChipShape,
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh
+                        ) {
+                            Text(
+                                text = "Total Speed: ${formatSpeed(totalSpeed)}",
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontFeatureSettings = "tnum"
+                                ),
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
 
-                    Surface(
-                        shape = ChipShape,
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh
-                    ) {
-                        Text(
-                            text = "$downloadingCount transferring",
-                            style = MaterialTheme.typography.labelMedium.copy(
-                                fontFeatureSettings = "tnum"
-                            ),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                            fontWeight = FontWeight.Medium
-                        )
+                        Surface(
+                            shape = ChipShape,
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh
+                        ) {
+                            Text(
+                                text = "$downloadingCount transferring",
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontFeatureSettings = "tnum"
+                                ),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
                     }
                 }
 
@@ -191,7 +195,8 @@ fun DownloadScreenContent(
                             task = task,
                             liveProgress = liveProgress,
                             onCancel = { onCancelDownload(task.id) },
-                            onRetry = { onRetryDownload(task.id) }
+                            onRetry = { onRetryDownload(task.id) },
+                            onRemove = { onRemoveDownload(task.id) }
                         )
                     }
                 }

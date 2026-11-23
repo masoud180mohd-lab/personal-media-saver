@@ -59,6 +59,7 @@ fun DownloadProgressCard(
     liveProgress: DownloadProgressInfo?,
     onCancel: () -> Unit,
     onRetry: () -> Unit,
+    onRemove: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val isFailed = task.status == DownloadStatus.FAILED || task.status == DownloadStatus.CANCELLED
@@ -164,21 +165,37 @@ fun DownloadProgressCard(
                     StatusPillChip(status = task.status)
                 }
 
-                // Trailing Action Button: Cancel (close icon) or Retry (refresh icon)
+                // Trailing Action Button: Cancel (close icon) or Retry + Remove when failed/cancelled
                 if (isFailed) {
-                    IconButton(
-                        onClick = onRetry,
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Refresh,
-                            contentDescription = "Retry",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
-                        )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        IconButton(
+                            onClick = onRetry,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Refresh,
+                                contentDescription = "Retry",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        IconButton(
+                            onClick = onRemove,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Close,
+                                contentDescription = "Remove",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
                 } else {
                     IconButton(
@@ -196,6 +213,16 @@ fun DownloadProgressCard(
                         )
                     }
                 }
+            }
+
+            if (isFailed && !task.errorMessage.isNullOrBlank()) {
+                Text(
+                    text = task.errorMessage!!,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
 
             // Middle: linear progress (primary, rounded, animated)

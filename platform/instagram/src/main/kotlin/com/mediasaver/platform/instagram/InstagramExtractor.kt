@@ -95,7 +95,10 @@ class InstagramExtractor @Inject constructor(
 
     private fun fetch(url: String, tier: Int, code: String): Result<InstagramMediaDetails> {
         val request = Request.Builder().url(url).tag(PlatformWebDomain::class.java, PlatformWebDomain("instagram.com"))
-            .header("User-Agent", USER_AGENT).header("Referer", "https://www.instagram.com/")
+            .header("User-Agent", USER_AGENT)
+            .header("Accept", if (tier == 2) "application/json, */*" else "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .header("Accept-Language", "en-US,en;q=0.9")
+            .header("Referer", "https://www.instagram.com/")
             .apply { if (tier == 2) header("X-IG-App-ID", IG_APP_ID) }.build()
         return try {
             okHttpClient.newCall(request).execute().use { response ->
@@ -148,7 +151,8 @@ class InstagramExtractor @Inject constructor(
             ?.replace(Regex("<[^>]*>"), "")?.let(::unescapeHtmlEntities)?.trim()?.ifBlank { null }
         val title = (meta["og:title"] ?: meta["og:description"])?.let(::unescapeHtmlEntities) ?: visibleText("Caption")
         val author = visibleText("Username") ?: title?.takeIf { "on Instagram:" in it }?.substringBefore("on Instagram:")?.trim()
-        val sidecarShell = listOf("edge_sidecar_to_children", "carousel_media", "GraphSidecar", "EmbedSidecar").any { it in html }
+        val sidecarShell = listOf("edge_sidecar_to_children", "carousel_media", "GraphSidecar").any { it in html } ||
+            Regex("""\bEmbedSidecar\b""").containsMatchIn(html)
         for (script in scripts.findAll(html)) {
             val body = script.groupValues[2].trim()
             val start = when {
@@ -156,10 +160,11 @@ class InstagramExtractor @Inject constructor(
                 "__additionalDataLoaded" in body || "_sharedData" in body -> body.indexOf('{')
                 else -> -1
             }
-            if (start < 0) continue
-            val json = decode(body.substring(start)) ?: continue
-            val media = findMedia(json, code) ?: continue
-            if (sidecarShell && media.carouselItems.isEmpty()) continue
+            val json = extractContextJson(body)
+                ?: (if (start >= 0) decode(body.substring(start)) else null)
+                ?: continue
+            val media = findMedia(json, code, requireCarousel = sidecarShell) ?: continue
+            if (sidecarShell && media.carouselItems.isEmpty() && media.videoUrl == null) continue
             return Result.success(media.copy(title = media.title ?: title, author = media.author ?: author))
         }
         // A sidecar or video shell is not a complete single-photo post.
@@ -174,6 +179,20 @@ class InstagramExtractor @Inject constructor(
             isDegradedPreview = video == null))
     }
 
+    private fun extractContextJson(body: String): Any? {
+        val keyIdx = body.indexOf("\"contextJSON\"")
+        if (keyIdx < 0) return null
+        var idx = body.indexOf(':', keyIdx + 13)
+        if (idx < 0) return null
+        idx++
+        while (idx < body.length && body[idx].isWhitespace()) idx++
+        if (idx >= body.length || body[idx] != '"') return null
+        val raw = try {
+            JSONTokener(body.substring(idx)).nextValue() as? String
+        } catch (_: org.json.JSONException) { null } ?: return null
+        return decode(raw)
+    }
+
     private fun decode(text: String): Any? = try {
         JSONTokener(text).nextValue()
     } catch (_: org.json.JSONException) { null }
@@ -184,10 +203,10 @@ class InstagramExtractor @Inject constructor(
         return findMedia(root, code)?.let { Result.success(it) } ?: unavailable()
     }
 
-    private fun findMedia(value: Any?, code: String, depth: Int = 0): InstagramMediaDetails? {
+    private fun findMedia(value: Any?, code: String, depth: Int = 0, requireCarousel: Boolean = false): InstagramMediaDetails? {
         if (depth > 48) return null
         if (value is JSONArray) {
-            for (i in 0 until value.length()) findMedia(value.opt(i), code, depth + 1)?.let { return it }
+            for (i in 0 until value.length()) findMedia(value.opt(i), code, depth + 1, requireCarousel)?.let { return it }
         }
         if (value !is JSONObject) return null
         val identifier = (value.opt("shortcode") as? String)?.ifBlank { null }
@@ -208,14 +227,16 @@ class InstagramExtractor @Inject constructor(
             return details(code, value, slides.first(), slides)
         }
         if (value.has("carousel_media") || sidecar != null || value.optString("__typename") == "GraphSidecar") return null
-        slide(value, 0)?.let { return details(code, value, it, emptyList()) }
+        val explicitVideoPost = identifier == code && (value.optBoolean("is_video") || value.optInt("media_type") == 2 ||
+            value.has("video_url") || value.has("video_versions"))
+        if (!requireCarousel || explicitVideoPost) slide(value, 0)?.let { return details(code, value, it, emptyList()) }
         // Payload wrappers vary. Never interpret a nested user's avatar or recommended media as the post.
         for (key in value.keys()) {
             if (key in setOf("user", "owner", "recommendations", "related_media")) continue
             val child = value.opt(key)
-            val wrapped = if (child is String && key in setOf("gql_data", "data", "shortcode_media", "xdt_shortcode_media") &&
+            val wrapped = if (child is String && key in setOf("gql_data", "data", "shortcode_media", "xdt_shortcode_media", "contextJSON") &&
                 child.trimStart().startsWith('{')) decode(child) else child
-            findMedia(wrapped, code, depth + 1)?.let { return it }
+            findMedia(wrapped, code, depth + 1, requireCarousel)?.let { return it }
         }
         return null
     }
@@ -225,7 +246,9 @@ class InstagramExtractor @Inject constructor(
             ?: obj.optJSONObject("edge_media_to_caption")?.optJSONArray("edges")?.optJSONObject(0)?.optJSONObject("node")?.optString("text")
             ?: obj.optString("name").ifBlank { null },
             (obj.optJSONObject("owner") ?: obj.optJSONObject("user"))?.optString("username"), item.imageUrl,
-            item.videoUrl, item.imageUrl, item.isVideo, carouselItems = slides)
+            item.videoUrl, item.imageUrl, item.isVideo,
+            durationSeconds = obj.optDouble("video_duration").takeIf { !it.isNaN() && it > 0.0 }?.toInt(),
+            carouselItems = slides)
 
     private fun slide(obj: JSONObject, index: Int): InstagramCarouselItem? {
         val ldType = obj.optString("@type")

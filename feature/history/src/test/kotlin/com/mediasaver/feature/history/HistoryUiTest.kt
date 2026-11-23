@@ -1,6 +1,9 @@
 package com.mediasaver.feature.history
 
+import android.content.Context
+import android.net.Uri
 import androidx.compose.material3.SnackbarHostState
+import androidx.test.core.app.ApplicationProvider
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -10,6 +13,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.mediasaver.core.model.DownloadStatus
 import com.mediasaver.core.model.DownloadTask
 import com.mediasaver.core.model.PlatformId
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -127,5 +131,62 @@ class HistoryUiTest {
         composeTestRule.onNodeWithText("Clear all history?").assertIsDisplayed()
         composeTestRule.onNodeWithText("Clear All").performClick()
         assertTrue(clearAllConfirmed)
+    }
+
+    @Test
+    fun `resolveMediaMimeType infers image and audio types when mimeType is null`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val baseTask = DownloadTask(
+            id = "t1",
+            url = "https://www.instagram.com/p/abc/",
+            platform = PlatformId.INSTAGRAM,
+            mediaId = "abc#slide_1",
+            status = DownloadStatus.COMPLETED
+        )
+
+        assertEquals(
+            "image/webp",
+            resolveMediaMimeType(
+                context,
+                Uri.parse("content://media/external_primary/images/media/1"),
+                baseTask.copy(mimeType = "image/webp", selectedFormat = "jpg")
+            )
+        )
+        assertEquals(
+            "image/jpeg",
+            resolveMediaMimeType(
+                context,
+                Uri.parse("content://media/external_primary/images/media/2"),
+                baseTask.copy(mimeType = null, selectedFormat = "jpg")
+            )
+        )
+        assertEquals(
+            "audio/mp4",
+            resolveMediaMimeType(
+                context,
+                Uri.parse("content://media/external_primary/audio/media/3"),
+                baseTask.copy(mimeType = null, selectedFormat = "m4a")
+            )
+        )
+        assertEquals(
+            "image/*",
+            resolveMediaMimeType(
+                context,
+                Uri.parse("content://media/external_primary/images/media/123"),
+                baseTask.copy(
+                    mimeType = null,
+                    selectedFormat = null,
+                    filePath = "content://media/external_primary/images/media/123"
+                )
+            )
+        )
+        assertEquals(
+            "*/*",
+            resolveMediaMimeType(
+                context,
+                Uri.parse("file:///tmp/unknown.bin"),
+                baseTask.copy(mimeType = null, selectedFormat = "bin", filePath = "/tmp/unknown.bin")
+            )
+        )
     }
 }

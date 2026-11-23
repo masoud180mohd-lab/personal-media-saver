@@ -6,6 +6,7 @@ import com.mediasaver.core.domain.repository.DownloadRepository
 import com.mediasaver.core.domain.repository.SettingsRepository
 import com.mediasaver.core.domain.usecase.*
 import com.mediasaver.core.model.*
+import com.mediasaver.core.model.error.AppError
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.*
@@ -21,12 +22,18 @@ import android.os.Looper
 class HomeViewModelTest {
     private val url = "https://youtube.com/watch?v=sample"
     private var queued: Pair<StreamInfo, StreamInfo?>? = null
+    private val queuedTasks = mutableListOf<DownloadTask>()
+    private val duplicateQualities = mutableSetOf<String>()
     private val downloads = object : DownloadRepository {
         override fun getActiveDownloads() = emptyFlow<List<DownloadTask>>()
         override fun getAllDownloads() = getActiveDownloads()
         override fun getCompletedDownloads() = getActiveDownloads()
         override fun observeProgress() = emptyFlow<DownloadProgressInfo>()
-        override suspend fun enqueue(task: DownloadTask, videoStream: StreamInfo, audioStream: StreamInfo?) { queued = videoStream to audioStream }
+        override suspend fun enqueue(task: DownloadTask, videoStream: StreamInfo, audioStream: StreamInfo?) {
+            if (videoStream.quality in duplicateQualities) throw AppError.DuplicateDownload()
+            queued = videoStream to audioStream
+            queuedTasks.add(task)
+        }
         override suspend fun cancel(downloadId: String) {}
         override suspend fun retry(downloadId: String) {}
         override suspend fun delete(downloadId: String) {}
@@ -90,5 +97,33 @@ class HomeViewModelTest {
             assertEquals(video to expected, queued)
             assertNotNull(vm.uiState.value.downloadEnqueuedMessage)
         }
+    }
+
+    @Test fun `startBatchDownload skips already saved slides and warns when all are duplicates`() {
+        val slides = listOf(
+            StreamInfo("https://cdn.example/s1.jpg", quality = "Slide 1", format = "jpg", mimeType = "image/jpeg", mediaIndex = 0),
+            StreamInfo("https://cdn.example/s2.jpg", quality = "Slide 2", format = "jpg", mimeType = "image/jpeg", mediaIndex = 1),
+            StreamInfo("https://cdn.example/s3.mp4", quality = "Slide 3", format = "mp4", mimeType = "video/mp4", mediaIndex = 2)
+        )
+        queuedTasks.clear()
+        duplicateQualities.clear()
+        duplicateQualities.add("Slide 1")
+
+        val vm = load(Result.success(slides))
+        vm.startBatchDownload(slides)
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(listOf("Slide 2", "Slide 3"), queuedTasks.map { it.selectedQuality })
+        assertEquals(listOf("image/jpeg", "video/mp4"), queuedTasks.map { it.mimeType })
+        assertEquals("Queued 2 items (1 already saved)", vm.uiState.value.downloadEnqueuedMessage)
+        assertNull(vm.uiState.value.errorMessage)
+
+        duplicateQualities.addAll(listOf("Slide 2", "Slide 3"))
+        vm.clearEnqueuedMessage()
+        vm.startBatchDownload(slides)
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertNull(vm.uiState.value.downloadEnqueuedMessage)
+        assertEquals("All slides are already queued or saved.", vm.uiState.value.errorMessage)
     }
 }

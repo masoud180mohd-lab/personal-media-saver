@@ -1,5 +1,6 @@
 package com.mediasaver.core.ui.components
 
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -92,7 +93,13 @@ fun HistoryRow(
                     .clip(ThumbShape)
                     .background(MaterialTheme.colorScheme.surfaceContainerHigh)
             ) {
-                val imageModel = task.filePath?.let { File(it) } ?: task.thumbnailUrl
+                val imageModel: Any? = when (val path = task.filePath?.takeIf { it.isNotBlank() }) {
+                    null -> task.thumbnailUrl
+                    else -> when {
+                        path.startsWith("content://") || path.startsWith("file://") -> Uri.parse(path)
+                        else -> File(path).takeIf { it.exists() } ?: task.thumbnailUrl
+                    }
+                }
                 SubcomposeAsyncImage(
                     model = ImageRequest.Builder(LocalContext.current)
                         .data(imageModel)
