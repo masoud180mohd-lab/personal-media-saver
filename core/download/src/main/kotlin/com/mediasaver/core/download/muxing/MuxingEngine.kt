@@ -50,7 +50,9 @@ class DefaultMuxingEngine @Inject constructor() : MuxingEngine {
                     try {
                         val vt = muxer.addTrack(vf)
                         val at = muxer.addTrack(af)
-                        if (vf.containsKey(MediaFormat.KEY_ROTATION)) muxer.setOrientationHint(vf.getInteger(MediaFormat.KEY_ROTATION))
+                        if (container == MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4 && vf.containsKey(MediaFormat.KEY_ROTATION)) {
+                            muxer.setOrientationHint(vf.getInteger(MediaFormat.KEY_ROTATION))
+                        }
                         val duration = listOf(vf, af).filter { it.containsKey(MediaFormat.KEY_DURATION) }
                             .maxOfOrNull { it.getLong(MediaFormat.KEY_DURATION) } ?: 0L
                         var buffer = ByteBuffer.allocateDirect(listOf(vf, af).filter { it.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE) }

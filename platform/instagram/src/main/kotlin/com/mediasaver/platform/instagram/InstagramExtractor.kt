@@ -190,8 +190,9 @@ class InstagramExtractor @Inject constructor(
             for (i in 0 until value.length()) findMedia(value.opt(i), code, depth + 1)?.let { return it }
         }
         if (value !is JSONObject) return null
-        val identifier = value.optString("shortcode", value.optString("code"))
-        if (identifier.isNotEmpty() && identifier != code) return null
+        val identifier = (value.opt("shortcode") as? String)?.ifBlank { null }
+            ?: (value.opt("code") as? String)?.ifBlank { null }
+        if (identifier != null && identifier != code) return null
         val sidecar = value.optJSONObject("edge_sidecar_to_children")
         val children = sidecar?.optJSONArray("edges") ?: value.optJSONArray("carousel_media")
         if (children != null) {

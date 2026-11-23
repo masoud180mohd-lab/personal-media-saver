@@ -1,5 +1,6 @@
 package com.mediasaver.core.download.worker
 
+import com.mediasaver.core.common.SecurityUtils
 import com.mediasaver.core.model.StreamInfo
 import com.mediasaver.core.model.error.AppError
 
@@ -36,10 +37,13 @@ internal enum class MediaPayload(val mime: String, val extension: String) {
             val canonical = when (declared) {
                 "audio/m4a", "audio/x-m4a" -> "audio/mp4"
                 "audio/mp3" -> "audio/mpeg"
+                "image/jpg" -> "image/jpeg"
+                "binary/octet-stream" -> "application/octet-stream"
                 else -> declared
             }
-            if (kind == null || kind.mime.substringBefore('/') != family ||
-                (canonical != null && canonical != "application/octet-stream" && canonical != kind.mime)) {
+            val headerMismatch = canonical != null && canonical != "application/octet-stream" &&
+                (canonical !in SecurityUtils.ALLOWED_MIME_TYPES || canonical.substringBefore('/') != family)
+            if (kind == null || kind.mime.substringBefore('/') != family || headerMismatch) {
                 throw AppError.DownloadFailed(null, userMessage = "The response is not the expected media format.")
             }
             return kind

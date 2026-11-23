@@ -195,7 +195,7 @@ class DownloadWorker @Inject constructor(
             PlatformId.INSTAGRAM -> "https://www.instagram.com" to PlatformWebDomain("instagram.com", "cdninstagram.com", "fbcdn.net")
             PlatformId.YOUTUBE -> "https://www.youtube.com" to PlatformWebDomain("youtube.com", "googlevideo.com")
             PlatformId.TIKTOK -> "https://www.tiktok.com" to PlatformWebDomain("tiktok.com", "tiktokcdn.com", "tiktokcdn-us.com",
-                "tiktokcdn-eu.com", "tiktokv.com", "byteoversea.com", "ibytedtos.com")
+                "tiktokcdn-eu.com", "tiktokv.com", "byteoversea.com", "ibytedtos.com", "muscdn.com")
             else -> throw AppError.UnsupportedPlatform(platform.name)
         }
         requestBuilder.header("Referer", "$origin/").header("Origin", origin)

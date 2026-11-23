@@ -216,4 +216,35 @@ class DownloadWorkerIntegrationTest {
             if (index == 0) assertEquals(path, transfer("copy", jpeg, "image/jpeg", "jpg").getOrThrow())
         }
     }
+
+    @Test fun `CDN MIME aliases are accepted per media family while HTML spoofing fails`() = runTest {
+        val resolver = ApplicationProvider.getApplicationContext<Context>().contentResolver
+        val videos = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val images = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val audio = MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val mp4 = byteArrayOf(0, 0, 0, 20) + "ftypisomfixture".toByteArray()
+        val jpeg = byteArrayOf(-1, -40, -1, 0)
+        val webmOpus = byteArrayOf(0x1a, 0x45, 0xdf.toByte(), 0xa3.toByte()) + "opus".toByteArray()
+        val m4a = byteArrayOf(0, 0, 0, 20) + "ftypM4A ".toByteArray()
+
+        val cases = listOf(
+            Triple(videos, mp4, Triple("binary/octet-stream", "mp4", false)),
+            Triple(images, jpeg, Triple("image/jpg", "jpg", false)),
+            Triple(audio, webmOpus, Triple("audio/opus", "webm", true)),
+            Triple(audio, m4a, Triple("audio/aac", "m4a", true))
+        )
+        for ((index, entry) in cases.withIndex()) {
+            val (collection, bytes, meta) = entry
+            val (contentType, format, isAudio) = meta
+            val expected = ContentUris.withAppendedId(collection, index.toLong() + 1)
+            val sink = ByteArrayOutputStream()
+            shadowOf(resolver).registerOutputStream(expected, sink)
+            val path = transfer("alias$index", bytes, contentType, format, isAudio).getOrThrow()
+            assertEquals(expected.toString(), path)
+            org.junit.Assert.assertArrayEquals(bytes, sink.toByteArray())
+        }
+
+        val spoofError = transfer("spoof", mp4, "text/html; charset=utf-8", "mp4", false).exceptionOrNull()
+        assertTrue(spoofError is com.mediasaver.core.model.error.AppError.DownloadFailed)
+    }
 }

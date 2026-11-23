@@ -37,6 +37,8 @@ object SecurityUtils {
         "audio/aac",
         "audio/mpeg",
         "audio/ogg",
+        "audio/opus",
+        "audio/vorbis",
         "image/jpeg",
         "image/png",
         "image/webp",

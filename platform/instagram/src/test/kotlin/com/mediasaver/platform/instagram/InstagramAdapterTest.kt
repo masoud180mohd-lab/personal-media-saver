@@ -87,4 +87,13 @@ class InstagramAdapterTest {
         }}});</script>"""
         assertEquals("High Resolution", adapter(200 to html).resolveStreams("abc", post).getOrThrow().single().quality)
     }
+
+    @Test fun `API response with numeric code wrapper still resolves inner matching media`() = runBlocking {
+        val apiJson = """{"code":200,"status":"ok","items":[{"code":"abc","media_type":2,"video_versions":[
+          {"url":"https://cdninstagram.com/hd.mp4","width":1080,"height":1920}],
+          "image_versions2":{"candidates":[{"url":"https://cdninstagram.com/poster.jpg"}]}}]}"""
+        val streams = adapter(200 to "", 200 to "", 200 to apiJson).resolveStreams("abc", post).getOrThrow()
+        assertEquals("https://cdninstagram.com/hd.mp4", streams.single().url)
+        assertEquals("https://cdninstagram.com/poster.jpg", streams.single().thumbnailUrl)
+    }
 }

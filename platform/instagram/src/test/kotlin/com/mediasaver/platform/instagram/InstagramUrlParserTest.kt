@@ -76,6 +76,14 @@ class InstagramUrlParserTest {
     }
 
     @Test
+    fun `username prefixed reel and post URLs extract shortcode and detect reels`() {
+        assertEquals("C89abc123", InstagramUrlParser.extractShortcode("https://www.instagram.com/natgeo/reel/C89abc123/"))
+        assertTrue(InstagramUrlParser.isReel("https://www.instagram.com/natgeo/reel/C89abc123/"))
+        assertEquals("C89abc123", InstagramUrlParser.extractShortcode("https://www.instagram.com/natgeo/p/C89abc123/?igsh=xyz"))
+        assertFalse(InstagramUrlParser.isReel("https://www.instagram.com/natgeo/p/C89abc123/?igsh=xyz"))
+    }
+
+    @Test
     fun `buildCanonicalPostUrl and buildCanonicalReelUrl format properly`() {
         assertEquals("https://www.instagram.com/p/C123/", InstagramUrlParser.buildCanonicalPostUrl("C123"))
         assertEquals("https://www.instagram.com/reel/C123/", InstagramUrlParser.buildCanonicalReelUrl("C123"))
