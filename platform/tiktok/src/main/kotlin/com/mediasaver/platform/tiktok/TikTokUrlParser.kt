@@ -17,9 +17,9 @@ object TikTokUrlParser {
 
     private val VIDEO_ID_PATTERN = Pattern.compile("^\\d{15,22}$")
 
-    // Standard video URL: https://www.tiktok.com/@username/video/7123456789012345678
+    // Standard video or photo post URL: https://www.tiktok.com/@username/video/7123... or /photo/7123...
     private val STANDARD_VIDEO_PATTERN = Pattern.compile(
-        "^https?://(?:(?:www|m)\\.)?tiktok\\.com/@[^/]+/video/(\\d{15,22})(?:[?#].*)?$",
+        "^https?://(?:(?:www|m)\\.)?tiktok\\.com/@[^/]+/(?:video|photo)/(\\d{15,22})(?:[?#].*)?$",
         Pattern.CASE_INSENSITIVE
     )
 
@@ -55,6 +55,11 @@ object TikTokUrlParser {
     }
 
     /**
+     * Determines whether the URL is a TikTok photo slideshow post (/photo/).
+     */
+    fun isPhotoUrl(url: String): Boolean = url.contains("/photo/", ignoreCase = true)
+
+    /**
      * Extracts numeric video ID directly from URLs already containing the canonical path.
      *
      * @param url Raw input URL
@@ -69,7 +74,7 @@ object TikTokUrlParser {
             return trimmed
         }
 
-        // 2. Standard @username/video/ID
+        // 2. Standard @username/video/ID or @username/photo/ID
         STANDARD_VIDEO_PATTERN.matcher(trimmed).let { matcher ->
             if (matcher.matches()) return matcher.group(1)
         }
@@ -79,9 +84,14 @@ object TikTokUrlParser {
             if (matcher.matches()) return matcher.group(1)
         }
 
-        // 4. Substring fallback for /video/12345
-        if (trimmed.contains("/video/")) {
-            val candidate = trimmed.substringAfter("/video/")
+        // 4. Substring fallback for /video/12345 or /photo/12345
+        val marker = when {
+            "/video/" in trimmed -> "/video/"
+            "/photo/" in trimmed -> "/photo/"
+            else -> null
+        }
+        if (marker != null) {
+            val candidate = trimmed.substringAfter(marker)
                 .substringBefore("?")
                 .substringBefore("#")
                 .trim('/')
@@ -106,7 +116,8 @@ object TikTokUrlParser {
             .build()
         try {
             client.newCall(request).execute().use { response ->
-                response.request.url.toString().takeIf {
+                val resolved = response.request.url
+                resolved.newBuilder().query(null).fragment(null).build().toString().takeIf {
                     isTikTokUrl(it) && extractVideoId(it) != null
                 }
             }

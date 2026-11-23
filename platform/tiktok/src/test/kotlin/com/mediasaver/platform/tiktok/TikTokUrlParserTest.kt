@@ -109,4 +109,21 @@ class TikTokUrlParserTest {
         }.build()
         assertNull(TikTokUrlParser.resolveCanonicalUrl("https://vm.tiktok.com/fixture/", loginRedirectClient))
     }
+
+    @Test
+    fun `extractVideoId and isPhotoUrl support photo slideshow URLs and strip tracking queries`() = kotlinx.coroutines.runBlocking {
+        val photoUrl = "https://www.tiktok.com/@creator/photo/$sampleVideoId?_r=1&_t=ZS-9B"
+        assertEquals(sampleVideoId, TikTokUrlParser.extractVideoId(photoUrl))
+        assertTrue(TikTokUrlParser.isTikTokUrl(photoUrl))
+        assertTrue(TikTokUrlParser.isPhotoUrl(photoUrl))
+        assertFalse(TikTokUrlParser.isPhotoUrl("https://www.tiktok.com/@creator/video/$sampleVideoId"))
+
+        val cleanCanonical = "https://www.tiktok.com/@europeboy999/video/$sampleVideoId"
+        val trackedCanonical = "$cleanCanonical?_r=1&_t=ZS-9Bdj5f8R02z#fragment"
+        val client = okhttp3.OkHttpClient.Builder().addInterceptor { chain ->
+            okhttp3.Response.Builder().request(chain.request().newBuilder().url(trackedCanonical).build())
+                .protocol(okhttp3.Protocol.HTTP_1_1).code(200).message("OK").body("".toResponseBody()).build()
+        }.build()
+        assertEquals(cleanCanonical, TikTokUrlParser.resolveCanonicalUrl("https://vm.tiktok.com/ZSs8QUxY2/", client))
+    }
 }

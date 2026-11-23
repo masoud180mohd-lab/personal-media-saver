@@ -1,5 +1,6 @@
 package com.mediasaver.core.download.worker
 
+import com.mediasaver.core.network.EphemeralStreamHeaders
 import com.mediasaver.core.network.interceptor.PlatformWebDomain
 import com.mediasaver.core.common.FileNameSanitizer
 import com.mediasaver.core.download.duplicate.DuplicateDetector
@@ -52,7 +53,8 @@ class DownloadWorker @Inject constructor(
     private val downloadDao: DownloadDao,
     private val tempFileManager: TempFileManager,
     private val mediaStoreManager: MediaStoreManager,
-    private val muxingEngine: MuxingEngine
+    private val muxingEngine: MuxingEngine,
+    private val ephemeralHeaders: EphemeralStreamHeaders = EphemeralStreamHeaders()
 ) {
 
     private val duplicates = DuplicateDetector(downloadDao)
@@ -197,7 +199,10 @@ class DownloadWorker @Inject constructor(
             .header("Accept-Language", "en-US,en;q=0.9")
             .header("Referer", "$origin/")
             .header("Origin", origin)
-            .apply { if (rangeHeader != null) header("Range", rangeHeader) }
+            .apply {
+                if (rangeHeader != null) header("Range", rangeHeader)
+                for ((k, v) in ephemeralHeaders.get(streamUrl)) header(k, v)
+            }
             .tag(PlatformWebDomain::class.java, hosts)
             .build()
     }

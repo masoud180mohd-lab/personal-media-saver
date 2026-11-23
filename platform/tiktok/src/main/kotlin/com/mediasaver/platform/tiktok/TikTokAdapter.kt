@@ -6,24 +6,28 @@ import com.mediasaver.core.model.MediaInfo
 import com.mediasaver.core.model.PlatformId
 import com.mediasaver.core.model.StreamInfo
 import com.mediasaver.core.model.error.AppError
+import com.mediasaver.core.network.interceptor.PlatformWebDomain
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import com.mediasaver.core.network.interceptor.PlatformWebDomain
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
  * Platform adapter implementation for TikTok content extraction.
- * Supports public video links and short-links (vm.tiktok.com, vt.tiktok.com),
- * resolves redirect chains up to 5 hops, and extracts direct MP4 media streams.
+ * Supports public video links, photo slideshows, and short links (`vm.tiktok.com`, `vt.tiktok.com`),
+ * resolves redirect chains up to 5 hops, and caches recent extractions in memory.
  */
 @Singleton
 class TikTokAdapter @Inject constructor(
     private val okHttpClient: OkHttpClient,
     private val tikTokExtractor: TikTokExtractor
 ) : PlatformAdapter {
+
+    private data class Cached(val timeNs: Long, val details: TikTokMediaDetails)
+
+    private val cache = LinkedHashMap<String, Cached>()
 
     override val platformId: PlatformId = PlatformId.TIKTOK
     override val platformName: String = "TikTok"
@@ -32,12 +36,27 @@ class TikTokAdapter @Inject constructor(
         return TikTokUrlParser.isTikTokUrl(url)
     }
 
+    private suspend fun fetchAndCacheDetails(videoId: String, targetUrl: String): Result<TikTokMediaDetails> {
+        synchronized(cache) {
+            cache.entries.removeAll { System.nanoTime() - it.value.timeNs >= CACHE_TTL_NS }
+            cache[videoId]?.let { return Result.success(it.details) }
+        }
+        return tikTokExtractor.extract(targetUrl, videoId).onSuccess { details ->
+            synchronized(cache) {
+                while (cache.size >= MAX_CACHE_ENTRIES) {
+                    cache.remove(cache.keys.first())
+                }
+                cache[videoId] = Cached(System.nanoTime(), details)
+            }
+        }
+    }
+
     override suspend fun extractMediaInfo(url: String): Result<MediaInfo> = withContext(Dispatchers.IO) {
         val resolvedUrl = TikTokUrlParser.resolveCanonicalUrl(url, okHttpClient)
             ?: return@withContext Result.failure(AppError.ExtractionFailed(PlatformId.TIKTOK))
         val videoId = TikTokUrlParser.extractVideoId(resolvedUrl)
             ?: return@withContext Result.failure(AppError.ExtractionFailed(PlatformId.TIKTOK))
-        val extractionResult = tikTokExtractor.extract(resolvedUrl, videoId)
+        val extractionResult = fetchAndCacheDetails(videoId, resolvedUrl)
 
         if (extractionResult.isFailure) {
             return@withContext Result.failure(
@@ -58,77 +77,109 @@ class TikTokAdapter @Inject constructor(
                 description = details.title,
                 thumbnailUrl = details.thumbnailUrl,
                 durationSeconds = details.durationSeconds,
-                sourceUrl = resolvedUrl
+                sourceUrl = details.sourceUrl
             )
         )
     }
 
-    override suspend fun resolveStreams(mediaId: String): Result<List<StreamInfo>> = withContext(Dispatchers.IO) {
-        val videoId = TikTokUrlParser.extractVideoId(mediaId)
-            ?: return@withContext Result.failure(AppError.MediaNotFound(mediaId))
-        val canonicalUrl = TikTokUrlParser.buildCanonicalWatchUrl(videoId)
-        val extractionResult = tikTokExtractor.extract(canonicalUrl, videoId)
-        if (extractionResult.isFailure) {
-            return@withContext Result.failure(
-                extractionResult.exceptionOrNull() ?: AppError.ExtractionFailed(PlatformId.TIKTOK)
-            )
-        }
+    override suspend fun resolveStreams(mediaId: String): Result<List<StreamInfo>> =
+        resolveStreams(mediaId, "")
 
-        val details = extractionResult.getOrThrow()
-        val streams = mutableListOf<StreamInfo>()
+    override suspend fun resolveStreams(mediaId: String, sourceUrl: String): Result<List<StreamInfo>> =
+        withContext(Dispatchers.IO) {
+            val videoId = TikTokUrlParser.extractVideoId(mediaId)
+                ?: return@withContext Result.failure(AppError.MediaNotFound(mediaId))
 
-        // 1. Watermark-Free Video Stream (or Primary Video)
-        val primaryLabel = if (details.isWatermarkFree) "HD (No Watermark)" else "HD"
-        streams.add(
-            StreamInfo(
-                url = details.videoUrl,
-                quality = primaryLabel,
-                format = "mp4",
-                mimeType = "video/mp4",
-                isVideoOnly = false,
-                isAudioOnly = false,
-                fileSize = null,
-                bitrate = null,
-                codec = "h264"
-            )
-        )
+            val targetUrl = synchronized(cache) {
+                cache.entries.removeAll { System.nanoTime() - it.value.timeNs >= CACHE_TTL_NS }
+                cache[videoId]?.details?.sourceUrl
+            } ?: if (sourceUrl.isNotBlank() && TikTokUrlParser.isTikTokUrl(sourceUrl)) {
+                TikTokUrlParser.resolveCanonicalUrl(sourceUrl, okHttpClient)
+                    ?: TikTokUrlParser.buildCanonicalWatchUrl(videoId)
+            } else {
+                TikTokUrlParser.buildCanonicalWatchUrl(videoId)
+            }
 
-        // 2. Watermarked fallback stream (if distinct)
-        if (!details.watermarkedVideoUrl.isNullOrBlank() && details.watermarkedVideoUrl != details.videoUrl) {
-            streams.add(
-                StreamInfo(
-                    url = details.watermarkedVideoUrl,
-                    quality = "SD (Watermarked)",
-                    format = "mp4",
-                    mimeType = "video/mp4",
-                    isVideoOnly = false,
-                    isAudioOnly = false,
-                    fileSize = null,
-                    bitrate = null,
-                    codec = "h264"
+            val extractionResult = fetchAndCacheDetails(videoId, targetUrl)
+            if (extractionResult.isFailure) {
+                return@withContext Result.failure(
+                    extractionResult.exceptionOrNull() ?: AppError.ExtractionFailed(PlatformId.TIKTOK)
                 )
-            )
-        }
+            }
 
-        // 3. Audio stream (MP3)
-        if (!details.audioUrl.isNullOrBlank()) {
-            streams.add(
-                StreamInfo(
-                    url = details.audioUrl,
-                    quality = "Audio Only",
-                    format = "mp3",
-                    mimeType = "audio/mpeg",
-                    isVideoOnly = false,
-                    isAudioOnly = true,
-                    fileSize = null,
-                    bitrate = null,
-                    codec = "mp3"
+            val details = extractionResult.getOrThrow()
+            if (details.photoItems.isNotEmpty()) {
+                val slides = details.photoItems.map { item ->
+                    StreamInfo(
+                        url = item.imageUrl,
+                        quality = "Slide ${item.mediaIndex + 1}",
+                        format = "jpg",
+                        mimeType = "image/jpeg",
+                        isVideoOnly = false,
+                        isAudioOnly = false,
+                        mediaIndex = item.mediaIndex,
+                        thumbnailUrl = item.imageUrl
+                    )
+                }
+                return@withContext Result.success(slides)
+            }
+
+            val streams = mutableListOf<StreamInfo>()
+            val primaryVideo = details.videoUrl
+            if (!primaryVideo.isNullOrBlank()) {
+                val primaryLabel = if (details.isWatermarkFree) "HD (No Watermark)" else "HD"
+                streams.add(
+                    StreamInfo(
+                        url = primaryVideo,
+                        quality = primaryLabel,
+                        format = "mp4",
+                        mimeType = "video/mp4",
+                        isVideoOnly = false,
+                        isAudioOnly = false,
+                        codec = "h264",
+                        thumbnailUrl = details.thumbnailUrl
+                    )
                 )
-            )
-        }
+            }
 
-        Result.success(streams)
-    }
+            val watermarked = details.watermarkedVideoUrl
+            if (!watermarked.isNullOrBlank() && watermarked != primaryVideo) {
+                streams.add(
+                    StreamInfo(
+                        url = watermarked,
+                        quality = "SD (Watermarked)",
+                        format = "mp4",
+                        mimeType = "video/mp4",
+                        isVideoOnly = false,
+                        isAudioOnly = false,
+                        codec = "h264",
+                        thumbnailUrl = details.thumbnailUrl
+                    )
+                )
+            }
+
+            val audio = details.audioUrl
+            if (!audio.isNullOrBlank()) {
+                streams.add(
+                    StreamInfo(
+                        url = audio,
+                        quality = "Audio Only",
+                        format = "mp3",
+                        mimeType = "audio/mpeg",
+                        isVideoOnly = false,
+                        isAudioOnly = true,
+                        codec = "mp3",
+                        thumbnailUrl = details.thumbnailUrl
+                    )
+                )
+            }
+
+            if (streams.isEmpty()) {
+                return@withContext Result.failure(AppError.ExtractionFailed(PlatformId.TIKTOK))
+            }
+
+            Result.success(streams)
+        }
 
     override suspend fun healthCheck(): AdapterStatus = withContext(Dispatchers.IO) {
         try {
@@ -136,19 +187,31 @@ class TikTokAdapter @Inject constructor(
                 .url("https://www.tiktok.com")
                 .tag(PlatformWebDomain::class.java, PlatformWebDomain("tiktok.com"))
                 .head()
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                .header("User-Agent", TikTokExtractor.MOBILE_USER_AGENT)
                 .build()
 
             val response = okHttpClient.newCall(request).execute()
             response.use { resp ->
                 when {
-                    resp.isSuccessful || resp.code in 300..399 -> AdapterStatus.OPERATIONAL
                     resp.code == 429 -> AdapterStatus.DEGRADED
+                    resp.isSuccessful || resp.code in 300..399 -> {
+                        val preview = resp.body?.string().orEmpty()
+                        if ("SlardarWAF" in preview || "slardar_us_waf" in preview) {
+                            AdapterStatus.DEGRADED
+                        } else {
+                            AdapterStatus.OPERATIONAL
+                        }
+                    }
                     else -> AdapterStatus.DEGRADED
                 }
             }
         } catch (_: Exception) {
             AdapterStatus.BROKEN
         }
+    }
+
+    private companion object {
+        const val CACHE_TTL_NS = 30_000_000_000L
+        const val MAX_CACHE_ENTRIES = 24
     }
 }

@@ -8,6 +8,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.mediasaver.core.database.MediaSaverDatabase
 import com.mediasaver.core.download.muxing.DefaultMuxingEngine
+import com.mediasaver.core.network.EphemeralStreamHeaders
 import com.mediasaver.core.model.PlatformId
 import com.mediasaver.core.model.StreamInfo
 import com.mediasaver.core.storage.MediaStoreManager
@@ -39,7 +40,8 @@ class DownloadWorkerIntegrationTest {
     private lateinit var appDatabase: MediaSaverDatabase
     private lateinit var tempFileManager: TempFileManager
     private lateinit var mediaStoreManager: MediaStoreManager
-    
+    private lateinit var ephemeralHeaders: EphemeralStreamHeaders
+
     private lateinit var downloadWorker: DownloadWorker
 
     @Before
@@ -62,13 +64,15 @@ class DownloadWorkerIntegrationTest {
 
         tempFileManager = TempFileManager(context)
         mediaStoreManager = MediaStoreManager(context)
+        ephemeralHeaders = EphemeralStreamHeaders()
 
         downloadWorker = DownloadWorker(
             okHttpClient = okHttpClient,
             downloadDao = appDatabase.downloadDao(),
             tempFileManager = tempFileManager,
             mediaStoreManager = mediaStoreManager,
-            muxingEngine = DefaultMuxingEngine()
+            muxingEngine = DefaultMuxingEngine(),
+            ephemeralHeaders = ephemeralHeaders
         )
     }
 
@@ -298,5 +302,73 @@ class DownloadWorkerIntegrationTest {
         assertEquals(expected.toString(), path)
         org.junit.Assert.assertArrayEquals(payload, sink.toByteArray())
         assertEquals(listOf(null, "bytes=0-1048575", "bytes=1048576-1099999"), rangeRequests)
+    }
+
+    @Test fun `TikTok ephemeral stream headers and ID3 audio with mislabeled video mp4 Content-Type succeed`() = runTest {
+        val resolver = ApplicationProvider.getApplicationContext<Context>().contentResolver
+        val videos = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val audioCollection = MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+
+        val videoUri = ContentUris.withAppendedId(videos, 1L)
+        val audioUri = ContentUris.withAppendedId(audioCollection, 2L)
+        val videoSink = ByteArrayOutputStream()
+        val audioSink = ByteArrayOutputStream()
+        shadowOf(resolver).registerOutputStream(videoUri, videoSink)
+        shadowOf(resolver).registerOutputStream(audioUri, audioSink)
+
+        val mp4Bytes = byteArrayOf(0, 0, 0, 20) + "ftypisomtiktok".toByteArray()
+        val mp3Bytes = "ID3\u0004\u0000\u0000\u0000\u0000\u0000\u0000audio-bytes".toByteArray()
+
+        val videoUrl = mockWebServer.url("/video.mp4").newBuilder().host("v16-webapp-prime.tiktok.com").build().toString()
+        val audioUrl = mockWebServer.url("/music.mp3").newBuilder().host("v16m.tiktokcdn.com").build().toString()
+        ephemeralHeaders.put(videoUrl, mapOf("Cookie" to "tt_chain_token=ephemeral123"))
+
+        val recordedCookies = mutableMapOf<String, String?>()
+        mockWebServer.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+            override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse {
+                val reqPath = request.path.orEmpty()
+                recordedCookies[reqPath] = request.getHeader("Cookie")
+                return when {
+                    reqPath.startsWith("/video.mp4") -> {
+                        if (request.getHeader("Cookie") != "tt_chain_token=ephemeral123") {
+                            MockResponse().setResponseCode(403)
+                        } else {
+                            MockResponse().setHeader("Content-Type", "video/mp4").setBody(okio.Buffer().write(mp4Bytes))
+                        }
+                    }
+                    reqPath.startsWith("/music.mp3") ->
+                        MockResponse().setHeader("Content-Type", "video/mp4").setBody(okio.Buffer().write(mp3Bytes))
+                    else -> MockResponse().setResponseCode(404)
+                }
+            }
+        }
+
+        appDatabase.downloadDao().insert(
+            com.mediasaver.core.database.entity.DownloadEntity(
+                id = "tt-vid", url = videoUrl, platform = "TIKTOK", mediaId = "tt1", status = "QUEUED"
+            )
+        )
+        appDatabase.downloadDao().insert(
+            com.mediasaver.core.database.entity.DownloadEntity(
+                id = "tt-aud", url = audioUrl, platform = "TIKTOK", mediaId = "tt2", status = "QUEUED"
+            )
+        )
+
+        val vidPath = downloadWorker.executeDownload(
+            "tt-vid", "tt.mp4", PlatformId.TIKTOK,
+            StreamInfo(videoUrl, quality = "HD (No Watermark)", format = "mp4", mimeType = "video/mp4")
+        ).getOrThrow()
+        val audPath = downloadWorker.executeDownload(
+            "tt-aud", "tt.mp3", PlatformId.TIKTOK,
+            StreamInfo(audioUrl, quality = "Audio Only", format = "mp3", mimeType = "audio/mpeg", isAudioOnly = true)
+        ).getOrThrow()
+
+        assertEquals(videoUri.toString(), vidPath)
+        assertEquals(audioUri.toString(), audPath)
+        assertEquals("tt_chain_token=ephemeral123", recordedCookies["/video.mp4"])
+        assertEquals("video/mp4", appDatabase.downloadDao().getById("tt-vid")?.mimeType)
+        assertEquals("audio/mpeg", appDatabase.downloadDao().getById("tt-aud")?.mimeType)
+        org.junit.Assert.assertArrayEquals(mp4Bytes, videoSink.toByteArray())
+        org.junit.Assert.assertArrayEquals(mp3Bytes, audioSink.toByteArray())
     }
 }

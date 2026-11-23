@@ -41,7 +41,9 @@ internal enum class MediaPayload(val mime: String, val extension: String) {
                 "binary/octet-stream" -> "application/octet-stream"
                 else -> declared
             }
+            val audioInMp4ContainerHeader = family == "audio" && canonical == "video/mp4"
             val headerMismatch = canonical != null && canonical != "application/octet-stream" &&
+                !audioInMp4ContainerHeader &&
                 (canonical !in SecurityUtils.ALLOWED_MIME_TYPES || canonical.substringBefore('/') != family)
             if (kind == null || kind.mime.substringBefore('/') != family || headerMismatch) {
                 throw AppError.DownloadFailed(null, userMessage = "The response is not the expected media format.")
