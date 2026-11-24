@@ -201,4 +201,39 @@ class DownloadRepositoryIntegrationTest {
         assertEquals(2, managedQueue.maxConcurrentDownloads)
         org.junit.Assert.assertFalse(managedQueue.wifiOnlyDownload)
     }
+
+    @Test
+    fun `video and audio-only streams for same mediaId coexist while duplicate audio is blocked`() = runTest {
+        val task = com.mediasaver.core.model.DownloadTask(
+            id = "vid-task",
+            url = "https://www.youtube.com/watch?v=same123",
+            platform = com.mediasaver.core.model.PlatformId.YOUTUBE,
+            mediaId = "same123"
+        )
+        val videoStream = com.mediasaver.core.model.StreamInfo(
+            url = "https://cdn.example/video.mp4",
+            quality = "720p",
+            format = "mp4",
+            mimeType = "video/mp4"
+        )
+        val audioStream = com.mediasaver.core.model.StreamInfo(
+            url = "https://cdn.example/audio.m4a",
+            quality = "128 kbps",
+            format = "m4a",
+            mimeType = "audio/mp4",
+            isAudioOnly = true
+        )
+
+        testQueue.enqueue(task, videoStream)
+        testQueue.enqueue(task.copy(id = "aud-task-1"), audioStream)
+
+        assertEquals("same123", appDatabase.downloadDao().getById("vid-task")?.mediaId)
+        assertEquals("same123#audio", appDatabase.downloadDao().getById("aud-task-1")?.mediaId)
+
+        val duplicateAudio = runCatching {
+            testQueue.enqueue(task.copy(id = "aud-task-2"), audioStream)
+        }
+        org.junit.Assert.assertTrue(duplicateAudio.exceptionOrNull() is com.mediasaver.core.model.error.AppError.DuplicateDownload)
+        org.junit.Assert.assertNull(appDatabase.downloadDao().getById("aud-task-2"))
+    }
 }

@@ -135,7 +135,11 @@ class DownloadQueueManager(
         }
         performStartupRecovery()
         queueMutex.withLock {
-            val itemId = videoStream.mediaIndex?.let { "${task.mediaId}#slide_${it + 1}" } ?: task.mediaId
+            val itemId = when {
+                videoStream.mediaIndex != null -> "${task.mediaId}#slide_${videoStream.mediaIndex!! + 1}"
+                videoStream.isAudioOnly -> "${task.mediaId}#audio"
+                else -> task.mediaId
+            }
             val existing = duplicates.checkBeforeDownload(task.url, task.platform, itemId)
             if (existing.isDuplicate) throw AppError.DuplicateDownload()
             val entity = task.toEntity().copy(mediaId = itemId, status = DownloadStatus.QUEUED.name)

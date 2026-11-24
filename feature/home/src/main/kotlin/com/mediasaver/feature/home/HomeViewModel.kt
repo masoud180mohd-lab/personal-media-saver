@@ -276,8 +276,7 @@ class HomeViewModel @Inject constructor(
                         }
 
                         val chosen = if (targetQuality.equals("Audio", ignoreCase = true)) {
-                            streams.filter { it.isAudioOnly }.maxByOrNull { it.bitrate ?: 0 }
-                                ?: streams.firstOrNull()
+                            selectPreferredAudioStream(streams)
                         } else {
                             selectPreferredStream(streams, targetQuality)
                         } ?: throw IllegalStateException("No matching stream for ${item.title}")
@@ -405,5 +404,17 @@ class HomeViewModel @Inject constructor(
         }
 
         return mediaStreams.firstOrNull()
+    }
+
+    internal fun selectPreferredAudioStream(streams: List<StreamInfo>): StreamInfo? {
+        val audioStreams = streams.filter { it.isAudioOnly }
+        if (audioStreams.isEmpty()) return streams.firstOrNull()
+        val compatible = audioStreams.filter { stream ->
+            val fmt = stream.format?.lowercase()
+            val mime = stream.mimeType?.lowercase()
+            fmt in setOf("m4a", "mp3", "aac", "ogg") ||
+                mime in setOf("audio/mp4", "audio/m4a", "audio/mpeg", "audio/aac", "audio/ogg")
+        }
+        return (compatible.ifEmpty { audioStreams }).maxByOrNull { it.bitrate ?: 0 }
     }
 }

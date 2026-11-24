@@ -371,4 +371,113 @@ class DownloadWorkerIntegrationTest {
         org.junit.Assert.assertArrayEquals(mp4Bytes, videoSink.toByteArray())
         org.junit.Assert.assertArrayEquals(mp3Bytes, audioSink.toByteArray())
     }
+
+    @Test
+    fun `audio-only webm falls back to MediaStore Downloads when MediaStore Audio rejects audio-webm and m4a saves via MediaStore Audio`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val resolver = context.contentResolver
+        val audioCollection = MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val audioUri = ContentUris.withAppendedId(audioCollection, 1L)
+        val audioSink = ByteArrayOutputStream()
+        shadowOf(resolver).registerOutputStream(audioUri, audioSink)
+
+        val m4aBytes = byteArrayOf(0, 0, 0, 20) + "ftypM4A fixture!".toByteArray()
+        val webmBytes = byteArrayOf(0x1a, 0x45, 0xdf.toByte(), 0xa3.toByte()) + ByteArray(16) { it.toByte() }
+        val m4aUrl = mockWebServer.url("/track.m4a").toString()
+        val webmUrl = mockWebServer.url("/track.webm").toString()
+
+        mockWebServer.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+            override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse {
+                return when (request.path) {
+                    "/track.m4a" -> MockResponse().setHeader("Content-Type", "audio/mp4").setBody(okio.Buffer().write(m4aBytes))
+                    "/track.webm" -> MockResponse().setHeader("Content-Type", "audio/webm").setBody(okio.Buffer().write(webmBytes))
+                    else -> MockResponse().setResponseCode(404)
+                }
+            }
+        }
+
+        appDatabase.downloadDao().insert(
+            com.mediasaver.core.database.entity.DownloadEntity(
+                id = "yt-m4a", url = m4aUrl, platform = "YOUTUBE", mediaId = "m1#audio", status = "QUEUED"
+            )
+        )
+        appDatabase.downloadDao().insert(
+            com.mediasaver.core.database.entity.DownloadEntity(
+                id = "yt-webm", url = webmUrl, platform = "YOUTUBE", mediaId = "m2#audio", status = "QUEUED"
+            )
+        )
+
+        val m4aPath = downloadWorker.executeDownload(
+            "yt-m4a", "Track 1.m4a", PlatformId.YOUTUBE,
+            StreamInfo(m4aUrl, quality = "128 kbps", format = "m4a", mimeType = "audio/mp4", isAudioOnly = true)
+        ).getOrThrow()
+
+        assertEquals(audioUri.toString(), m4aPath)
+        assertEquals("audio/mp4", appDatabase.downloadDao().getById("yt-m4a")?.mimeType)
+        org.junit.Assert.assertArrayEquals(m4aBytes, audioSink.toByteArray())
+
+        val downloadsCollection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val downloadsUri = ContentUris.withAppendedId(downloadsCollection, 2L)
+        val fallbackFile = java.io.File.createTempFile("fallback-webm", ".webm", context.cacheDir)
+        var audioInsertAttempted = false
+        val provider = object : android.content.ContentProvider() {
+            override fun onCreate(): Boolean = true
+            override fun query(
+                uri: android.net.Uri,
+                projection: Array<out String>?,
+                selection: String?,
+                selectionArgs: Array<out String>?,
+                sortOrder: String?
+            ): android.database.Cursor? = null
+            override fun getType(uri: android.net.Uri): String? = null
+            override fun insert(uri: android.net.Uri, values: android.content.ContentValues?): android.net.Uri? {
+                val mime = values?.getAsString(MediaStore.MediaColumns.MIME_TYPE)
+                if (uri == audioCollection && mime == "audio/webm") {
+                    audioInsertAttempted = true
+                    throw IllegalArgumentException("Unsupported MIME type audio/webm")
+                }
+                if (uri == downloadsCollection) {
+                    return downloadsUri
+                }
+                return null
+            }
+            override fun delete(uri: android.net.Uri, selection: String?, selectionArgs: Array<out String>?): Int =
+                if (uri == downloadsUri) 1 else 0
+            override fun update(
+                uri: android.net.Uri,
+                values: android.content.ContentValues?,
+                selection: String?,
+                selectionArgs: Array<out String>?
+            ): Int = if (uri == downloadsUri) 1 else 0
+            override fun openFile(uri: android.net.Uri, mode: String): android.os.ParcelFileDescriptor? {
+                if (uri == downloadsUri) {
+                    return android.os.ParcelFileDescriptor.open(
+                        fallbackFile,
+                        android.os.ParcelFileDescriptor.MODE_CREATE or
+                            android.os.ParcelFileDescriptor.MODE_TRUNCATE or
+                            android.os.ParcelFileDescriptor.MODE_READ_WRITE
+                    )
+                }
+                return super.openFile(uri, mode)
+            }
+        }
+        provider.attachInfo(
+            context,
+            android.content.pm.ProviderInfo().apply {
+                authority = MediaStore.AUTHORITY
+                exported = true
+            }
+        )
+        org.robolectric.shadows.ShadowContentResolver.registerProviderInternal(MediaStore.AUTHORITY, provider)
+
+        val webmPath = downloadWorker.executeDownload(
+            "yt-webm", "Track 2.webm", PlatformId.YOUTUBE,
+            StreamInfo(webmUrl, quality = "160 kbps", format = "webm", mimeType = "audio/webm", isAudioOnly = true)
+        ).getOrThrow()
+
+        assertTrue(audioInsertAttempted)
+        assertEquals(downloadsUri.toString(), webmPath)
+        assertEquals("audio/webm", appDatabase.downloadDao().getById("yt-webm")?.mimeType)
+        org.junit.Assert.assertArrayEquals(webmBytes, fallbackFile.readBytes())
+    }
 }

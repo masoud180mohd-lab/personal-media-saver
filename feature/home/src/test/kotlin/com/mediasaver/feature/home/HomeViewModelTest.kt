@@ -235,4 +235,56 @@ class HomeViewModelTest {
         vm.onSelectAllPlaylistVideos(true)
         assertEquals(3, vm.uiState.value.selectedPlaylistVideoIds.size)
     }
+
+    @Test fun `playlist Audio quality prefers m4a over higher-bitrate webm and falls back to webm when alone`() = kotlinx.coroutines.runBlocking {
+        queuedTasks.clear()
+        duplicateQualities.clear()
+        UpdateSettingsUseCase(settings).updatePreferredQuality("720p")
+
+        val playlistMedia = MediaInfo(
+            id = "PLaudioPref123",
+            platform = PlatformId.YOUTUBE,
+            title = "Audio Preference Test",
+            sourceUrl = "https://www.youtube.com/playlist?list=PLaudioPref123",
+            playlistItems = listOf(
+                PlaylistItem("vidM4aPrefer", "Has M4A And WebM", "Channel A", url = "https://www.youtube.com/watch?v=vidM4aPrefer"),
+                PlaylistItem("vidWebmOnly1", "WebM Only", "Channel A", url = "https://www.youtube.com/watch?v=vidWebmOnly1")
+            )
+        )
+
+        val m4aStream = StreamInfo("https://cdn.example/audio.m4a", quality = "128 kbps", format = "m4a", mimeType = "audio/mp4", codec = "mp4a.40.2", isAudioOnly = true, bitrate = 128)
+        val webmAudio = StreamInfo("https://cdn.example/audio.webm", quality = "160 kbps", format = "webm", mimeType = "audio/webm", codec = "opus", isAudioOnly = true, bitrate = 160)
+
+        val adapter = object : PlatformAdapter {
+            override val platformId = PlatformId.YOUTUBE
+            override val platformName = "YouTube"
+            override fun canHandle(url: String) = true
+            override suspend fun extractMediaInfo(url: String) = Result.success(playlistMedia)
+            override suspend fun resolveStreams(mediaId: String) = when (mediaId) {
+                "vidM4aPrefer" -> Result.success(listOf(webmAudio, m4aStream))
+                else -> Result.success(listOf(webmAudio))
+            }
+            override suspend fun healthCheck() = AdapterStatus.OPERATIONAL
+        }
+
+        val resolver = PlatformResolver(listOf(adapter))
+        val vm = HomeViewModel(
+            ProcessUrlUseCase(resolver),
+            ResolveStreamsUseCase(resolver),
+            EnqueueDownloadUseCase(downloads),
+            GetSettingsUseCase(settings)
+        )
+
+        vm.onUrlChange(playlistMedia.sourceUrl)
+        vm.processUrl()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        vm.onSelectPlaylistQuality("Audio")
+        vm.startPlaylistBatchDownload()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(listOf("vidM4aPrefer", "vidWebmOnly1"), queuedTasks.map { it.mediaId })
+        assertEquals(listOf("m4a", "webm"), queuedTasks.map { it.selectedFormat })
+        assertEquals(listOf("audio/mp4", "audio/webm"), queuedTasks.map { it.mimeType })
+    }
 }

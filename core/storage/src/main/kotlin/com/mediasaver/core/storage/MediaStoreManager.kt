@@ -33,9 +33,36 @@ class MediaStoreManager @Inject constructor(
         save(sourceFile, fileName, platform, mimeType, "Pictures", "jpg", if (Build.VERSION.SDK_INT >= 29)
             MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY) else MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
 
-    suspend fun saveAudio(sourceFile: File, fileName: String, platform: PlatformId, mimeType: String = "audio/mp4") =
-        save(sourceFile, fileName, platform, mimeType, "Music", "m4a", if (Build.VERSION.SDK_INT >= 29)
-            MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY) else MediaStore.Audio.Media.EXTERNAL_CONTENT_URI)
+    suspend fun saveAudio(sourceFile: File, fileName: String, platform: PlatformId, mimeType: String = "audio/mp4"): Result<Uri> {
+        val cleanMime = mimeType.substringBefore(';').trim().lowercase()
+        val primaryResult = save(
+            sourceFile = sourceFile,
+            fileName = fileName,
+            platform = platform,
+            mimeType = mimeType,
+            directory = "Music",
+            defaultExtension = "m4a",
+            collectionUri = if (Build.VERSION.SDK_INT >= 29) {
+                MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            } else {
+                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+            }
+        )
+        val err = primaryResult.exceptionOrNull()
+        val unsupportedMime = err is IllegalArgumentException || err?.cause is IllegalArgumentException
+        if (primaryResult.isFailure && Build.VERSION.SDK_INT >= 29 && unsupportedMime) {
+            return save(
+                sourceFile = sourceFile,
+                fileName = fileName,
+                platform = platform,
+                mimeType = cleanMime.ifBlank { "application/octet-stream" },
+                directory = "Download",
+                defaultExtension = File(fileName).extension.ifBlank { "m4a" },
+                collectionUri = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            )
+        }
+        return primaryResult
+    }
 
     /** Roll back a new gallery entry if recording its completion fails. */
     fun discard(uri: Uri) {
