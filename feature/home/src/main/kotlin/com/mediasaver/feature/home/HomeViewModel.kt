@@ -44,7 +44,13 @@ class HomeViewModel @Inject constructor(
         val detected = PlatformDetector.detect(newUrl)
         _uiState.update {
             it.copy(
-                urlInput = newUrl, mediaInfo = null, selectedStream = null, availableStreams = emptyList(), isExtracting = false,
+                urlInput = newUrl,
+                mediaInfo = null,
+                selectedStream = null,
+                availableStreams = emptyList(),
+                selectedPlaylistVideoIds = emptySet(),
+                playlistEnqueueProgress = null,
+                isExtracting = false,
                 detectedPlatform = detected,
                 errorMessage = null
             )
@@ -66,12 +72,32 @@ class HomeViewModel @Inject constructor(
                     errorMessage = null,
                     mediaInfo = null,
                     availableStreams = emptyList(),
-                    selectedStream = null
+                    selectedStream = null,
+                    selectedPlaylistVideoIds = emptySet(),
+                    playlistEnqueueProgress = null
                 )
             }
 
             val result = processUrlUseCase(targetUrl)
             result.onSuccess { info ->
+                val settings = getSettingsUseCase().firstOrNull()
+                val preferredQuality = settings?.preferredQuality ?: "720p"
+
+                if (info.isPlaylist) {
+                    _uiState.update {
+                        it.copy(
+                            isExtracting = false,
+                            mediaInfo = info,
+                            availableStreams = emptyList(),
+                            selectedStream = null,
+                            selectedPlaylistVideoIds = info.playlistItems.mapTo(linkedSetOf()) { item -> item.videoId },
+                            playlistQuality = preferredQuality,
+                            detectedPlatform = info.platform
+                        )
+                    }
+                    return@launch
+                }
+
                 // Resolve stream options
                 val streamsResult = resolveStreamsUseCase(info.id, targetUrl)
                 val streams = streamsResult.getOrNull().orEmpty()
@@ -81,10 +107,6 @@ class HomeViewModel @Inject constructor(
                             ?: "No downloadable streams are available.") }
                     return@launch
                 }
-
-                // Select preferred stream from user settings or fallback to first available
-                val settings = getSettingsUseCase().firstOrNull()
-                val preferredQuality = settings?.preferredQuality ?: "720p"
 
                 val chosenStream = selectPreferredStream(streams, preferredQuality)
 
@@ -186,8 +208,161 @@ class HomeViewModel @Inject constructor(
             it.copy(
                 mediaInfo = null,
                 availableStreams = emptyList(),
-                selectedStream = null
+                selectedStream = null,
+                selectedPlaylistVideoIds = emptySet(),
+                playlistEnqueueProgress = null
             )
+        }
+    }
+
+    fun onTogglePlaylistVideo(videoId: String) {
+        _uiState.update { state ->
+            val current = state.selectedPlaylistVideoIds.toMutableSet()
+            if (!current.add(videoId)) {
+                current.remove(videoId)
+            }
+            state.copy(selectedPlaylistVideoIds = current)
+        }
+    }
+
+    fun onSelectAllPlaylistVideos(selectAll: Boolean) {
+        _uiState.update { state ->
+            val allIds = if (selectAll) {
+                state.mediaInfo?.playlistItems.orEmpty().mapTo(linkedSetOf()) { it.videoId }
+            } else {
+                emptySet()
+            }
+            state.copy(selectedPlaylistVideoIds = allIds)
+        }
+    }
+
+    fun onSelectPlaylistQuality(quality: String) {
+        _uiState.update { it.copy(playlistQuality = quality) }
+    }
+
+    fun startPlaylistBatchDownload() {
+        val state = _uiState.value
+        val media = state.mediaInfo ?: return
+        if (!media.isPlaylist || state.isEnqueuing) return
+        val selectedItems = media.playlistItems.filter { it.videoId in state.selectedPlaylistVideoIds }
+        if (selectedItems.isEmpty()) return
+
+        val targetQuality = state.playlistQuality
+        _uiState.update {
+            it.copy(
+                isEnqueuing = true,
+                playlistEnqueueProgress = "0/${selectedItems.size}",
+                errorMessage = null
+            )
+        }
+
+        viewModelScope.launch {
+            try {
+                var enqueuedCount = 0
+                var skippedDuplicates = 0
+                var firstError: Exception? = null
+
+                for ((index, item) in selectedItems.withIndex()) {
+                    _uiState.update {
+                        it.copy(playlistEnqueueProgress = "${index + 1}/${selectedItems.size}")
+                    }
+                    try {
+                        val streamsResult = resolveStreamsUseCase(item.videoId, item.url)
+                        val streams = streamsResult.getOrElse { err ->
+                            throw (err as? Exception ?: Exception(err.localizedMessage ?: "Stream resolution failed"))
+                        }
+                        if (streams.isEmpty()) {
+                            throw IllegalStateException("No downloadable streams for ${item.title}")
+                        }
+
+                        val chosen = if (targetQuality.equals("Audio", ignoreCase = true)) {
+                            streams.filter { it.isAudioOnly }.maxByOrNull { it.bitrate ?: 0 }
+                                ?: streams.firstOrNull()
+                        } else {
+                            selectPreferredStream(streams, targetQuality)
+                        } ?: throw IllegalStateException("No matching stream for ${item.title}")
+
+                        val audio = if (chosen.isVideoOnly) chosen.companionAudio(streams) else null
+                        val primary = if (chosen.isVideoOnly && audio == null) {
+                            streams.firstOrNull { it.isProgressive }
+                                ?: throw IllegalStateException("No compatible audio stream for ${item.title}")
+                        } else {
+                            chosen
+                        }
+
+                        val task = DownloadTask(
+                            id = UUID.randomUUID().toString(),
+                            url = item.url,
+                            platform = media.platform,
+                            mediaId = item.videoId,
+                            title = item.title,
+                            thumbnailUrl = primary.thumbnailUrl ?: item.thumbnailUrl ?: media.thumbnailUrl,
+                            status = DownloadStatus.QUEUED,
+                            selectedQuality = primary.quality,
+                            selectedFormat = primary.format,
+                            mimeType = primary.mimeType,
+                            totalBytes = primary.fileSize,
+                            durationSeconds = item.durationSeconds
+                        )
+                        enqueueDownloadUseCase(task, primary, audio)
+                        enqueuedCount++
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: AppError.DuplicateDownload) {
+                        skippedDuplicates++
+                    } catch (e: Exception) {
+                        if (selectedItems.size == 1) throw e
+                        if (firstError == null) firstError = e
+                    }
+                }
+
+                when {
+                    enqueuedCount > 0 -> {
+                        val msg = when {
+                            skippedDuplicates > 0 -> "Queued $enqueuedCount videos ($skippedDuplicates already saved)"
+                            enqueuedCount > 1 -> "Queued $enqueuedCount playlist downloads"
+                            else -> "Download queued"
+                        }
+                        _uiState.update {
+                            it.copy(
+                                isEnqueuing = false,
+                                playlistEnqueueProgress = null,
+                                downloadEnqueuedMessage = msg,
+                                errorMessage = null
+                            )
+                        }
+                    }
+                    skippedDuplicates > 0 -> {
+                        val msg = if (selectedItems.size > 1) {
+                            "All selected videos are already queued or saved."
+                        } else {
+                            "This item is already queued or saved."
+                        }
+                        _uiState.update {
+                            it.copy(isEnqueuing = false, playlistEnqueueProgress = null, errorMessage = msg)
+                        }
+                    }
+                    else -> {
+                        _uiState.update {
+                            it.copy(
+                                isEnqueuing = false,
+                                playlistEnqueueProgress = null,
+                                errorMessage = firstError?.localizedMessage ?: "Failed to queue playlist downloads."
+                            )
+                        }
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isEnqueuing = false,
+                        playlistEnqueueProgress = null,
+                        errorMessage = e.localizedMessage ?: "Failed to queue playlist downloads."
+                    )
+                }
+            }
         }
     }
 

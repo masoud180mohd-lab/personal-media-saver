@@ -159,4 +159,80 @@ class HomeViewModelTest {
         val fallback480 = vm720.selectPreferredStream(listOf(audio, adaptive1080Mp4, progressive360, progressive720), "480p")
         assertEquals(progressive360, fallback480)
     }
+
+    @Test fun `playlist extraction selects all videos toggles selection and enqueues batch with quality`() = kotlinx.coroutines.runBlocking {
+        queuedTasks.clear()
+        duplicateQualities.clear()
+        UpdateSettingsUseCase(settings).updatePreferredQuality("720p")
+
+        val playlistItems = listOf(
+            PlaylistItem("vid11111111", "First Episode", "Channel A", durationSeconds = 120, url = "https://www.youtube.com/watch?v=vid11111111"),
+            PlaylistItem("vid22222222", "Second Episode", "Channel A", durationSeconds = 240, url = "https://www.youtube.com/watch?v=vid22222222"),
+            PlaylistItem("vid33333333", "Third Episode", "Channel A", durationSeconds = 300, url = "https://www.youtube.com/watch?v=vid33333333")
+        )
+        val playlistMedia = MediaInfo(
+            id = "PLtestplaylist123",
+            platform = PlatformId.YOUTUBE,
+            title = "Kotlin Course Playlist",
+            thumbnailUrl = "https://img.youtube.com/vi/vid11111111/hqdefault.jpg",
+            sourceUrl = "https://www.youtube.com/playlist?list=PLtestplaylist123",
+            playlistItems = playlistItems
+        )
+
+        val resolvedVideoIds = mutableListOf<String>()
+        val adapter = object : PlatformAdapter {
+            override val platformId = PlatformId.YOUTUBE
+            override val platformName = "YouTube"
+            override fun canHandle(url: String) = true
+            override suspend fun extractMediaInfo(url: String) = Result.success(playlistMedia)
+            override suspend fun resolveStreams(mediaId: String): Result<List<StreamInfo>> {
+                resolvedVideoIds.add(mediaId)
+                return Result.success(
+                    listOf(
+                        StreamInfo("https://cdn.example/$mediaId-720.mp4", quality = "720p", format = "mp4", isVideoOnly = false),
+                        StreamInfo("https://cdn.example/$mediaId-1080.mp4", quality = "1080p60", format = "mp4", isVideoOnly = true),
+                        StreamInfo("https://cdn.example/$mediaId-audio.m4a", quality = "128 kbps", format = "m4a", codec = "mp4a.40.2", isAudioOnly = true, bitrate = 128)
+                    )
+                )
+            }
+            override suspend fun healthCheck() = AdapterStatus.OPERATIONAL
+        }
+
+        val resolver = PlatformResolver(listOf(adapter))
+        val vm = HomeViewModel(
+            ProcessUrlUseCase(resolver),
+            ResolveStreamsUseCase(resolver),
+            EnqueueDownloadUseCase(downloads),
+            GetSettingsUseCase(settings)
+        )
+
+        vm.onUrlChange(playlistMedia.sourceUrl)
+        vm.processUrl()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        val initialState = vm.uiState.value
+        assertTrue(initialState.mediaInfo?.isPlaylist == true)
+        assertEquals(setOf("vid11111111", "vid22222222", "vid33333333"), initialState.selectedPlaylistVideoIds)
+        assertEquals("720p", initialState.playlistQuality)
+
+        // Uncheck second item and switch batch quality to 1080p
+        vm.onTogglePlaylistVideo("vid22222222")
+        assertEquals(setOf("vid11111111", "vid33333333"), vm.uiState.value.selectedPlaylistVideoIds)
+        vm.onSelectPlaylistQuality("1080p")
+        assertEquals("1080p", vm.uiState.value.playlistQuality)
+
+        vm.startPlaylistBatchDownload()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(listOf("vid11111111", "vid33333333"), resolvedVideoIds)
+        assertEquals(listOf("vid11111111", "vid33333333"), queuedTasks.map { it.mediaId })
+        assertEquals(listOf("1080p60", "1080p60"), queuedTasks.map { it.selectedQuality })
+        assertEquals("Queued 2 playlist downloads", vm.uiState.value.downloadEnqueuedMessage)
+
+        // Select All / Clear All helpers
+        vm.onSelectAllPlaylistVideos(false)
+        assertTrue(vm.uiState.value.selectedPlaylistVideoIds.isEmpty())
+        vm.onSelectAllPlaylistVideos(true)
+        assertEquals(3, vm.uiState.value.selectedPlaylistVideoIds.size)
+    }
 }

@@ -3,6 +3,7 @@ package com.mediasaver.feature.home
 import com.mediasaver.core.common.PlatformDetector
 import com.mediasaver.core.model.MediaInfo
 import com.mediasaver.core.model.PlatformId
+import com.mediasaver.core.model.PlaylistItem
 import com.mediasaver.core.model.StreamInfo
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -17,6 +18,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -175,5 +177,96 @@ class HomeUiTest {
         }
         composeTestRule.onNodeWithText("No playable video").assertExists()
         composeTestRule.onNodeWithText("Download").assertIsNotEnabled()
+    }
+
+    @Test
+    fun `HomeScreenContent renders playlist selection items and Download Selected button`() {
+        val items = listOf(
+            PlaylistItem("vid11111111", "Intro Video", "Course Author", durationSeconds = 95, url = "https://www.youtube.com/watch?v=vid11111111"),
+            PlaylistItem("vid22222222", "Deep Dive", "Course Author", durationSeconds = 210, url = "https://www.youtube.com/watch?v=vid22222222")
+        )
+        val playlistMedia = MediaInfo(
+            id = "PLui12345678",
+            platform = PlatformId.YOUTUBE,
+            title = "Android Architecture Series",
+            sourceUrl = "https://www.youtube.com/playlist?list=PLui12345678",
+            playlistItems = items
+        )
+
+        composeTestRule.setContent {
+            HomeScreenContent(
+                uiState = HomeUiState(
+                    urlInput = playlistMedia.sourceUrl,
+                    detectedPlatform = PlatformId.YOUTUBE,
+                    mediaInfo = playlistMedia,
+                    selectedPlaylistVideoIds = setOf("vid11111111", "vid22222222"),
+                    playlistQuality = "720p"
+                ),
+                snackbarHostState = SnackbarHostState(),
+                onUrlChange = {},
+                onProcessUrl = {},
+                onPaste = {},
+                onSelectStream = {},
+                onStartDownload = {},
+                onStartBatchDownload = {}
+            )
+        }
+
+        composeTestRule.onNodeWithText("2 of 2 selected").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("1. Intro Video").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("2. Deep Dive").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("Download Selected (2)").performScrollTo().assertIsDisplayed().assertIsEnabled()
+    }
+
+    @Test
+    fun `HomeScreenContent paginates and filters large playlists cleanly`() {
+        val items = (1..60).map { index ->
+            val id = "vid%08d".format(index)
+            PlaylistItem(
+                videoId = id,
+                title = "Video $index",
+                author = "Channel",
+                durationSeconds = 120,
+                url = "https://www.youtube.com/watch?v=$id"
+            )
+        }
+        val playlistMedia = MediaInfo(
+            id = "PLlarge123456",
+            platform = PlatformId.YOUTUBE,
+            title = "Large Playlist",
+            sourceUrl = "https://www.youtube.com/playlist?list=PLlarge123456",
+            playlistItems = items,
+            totalPlaylistCount = 60
+        )
+
+        composeTestRule.setContent {
+            HomeScreenContent(
+                uiState = HomeUiState(
+                    urlInput = playlistMedia.sourceUrl,
+                    detectedPlatform = PlatformId.YOUTUBE,
+                    mediaInfo = playlistMedia,
+                    selectedPlaylistVideoIds = items.mapTo(linkedSetOf()) { it.videoId },
+                    playlistQuality = "720p"
+                ),
+                snackbarHostState = SnackbarHostState(),
+                onUrlChange = {},
+                onProcessUrl = {},
+                onPaste = {},
+                onSelectStream = {},
+                onStartDownload = {},
+                onStartBatchDownload = {}
+            )
+        }
+
+        composeTestRule.onNodeWithText("Download Selected (60)").performScrollTo().assertIsDisplayed().assertIsEnabled()
+        composeTestRule.onNodeWithText("60 of 60 selected").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("Showing 50 of 60 videos").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("60. Video 60").assertDoesNotExist()
+
+        composeTestRule.onNodeWithText("Show 10 More").performScrollTo().performClick()
+        composeTestRule.onNodeWithText("60. Video 60").performScrollTo().assertIsDisplayed()
+
+        composeTestRule.onAllNodes(hasSetTextAction())[1].performScrollTo().performTextInput("59")
+        composeTestRule.onNodeWithText("59. Video 59").performScrollTo().assertIsDisplayed()
     }
 }

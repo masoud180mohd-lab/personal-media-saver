@@ -7,6 +7,9 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,20 +25,38 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import com.mediasaver.core.model.PlaylistItem
 import com.mediasaver.core.model.isCarousel
+import androidx.compose.ui.text.style.TextOverflow
+import com.mediasaver.core.ui.theme.CardShape
+import com.mediasaver.core.ui.theme.ChipShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -112,6 +133,18 @@ fun HomeScreen(
         },
         onStartBatchDownload = { streams ->
             viewModel.startBatchDownload(streams)
+        },
+        onTogglePlaylistVideo = { videoId ->
+            viewModel.onTogglePlaylistVideo(videoId)
+        },
+        onSelectAllPlaylistVideos = { selectAll ->
+            viewModel.onSelectAllPlaylistVideos(selectAll)
+        },
+        onSelectPlaylistQuality = { quality ->
+            viewModel.onSelectPlaylistQuality(quality)
+        },
+        onStartPlaylistBatchDownload = {
+            viewModel.startPlaylistBatchDownload()
         }
     )
 }
@@ -126,7 +159,11 @@ fun HomeScreenContent(
     onPaste: () -> Unit,
     onSelectStream: (StreamInfo) -> Unit,
     onStartDownload: (StreamInfo?) -> Unit,
-    onStartBatchDownload: (List<StreamInfo>) -> Unit
+    onStartBatchDownload: (List<StreamInfo>) -> Unit,
+    onTogglePlaylistVideo: (String) -> Unit = {},
+    onSelectAllPlaylistVideos: (Boolean) -> Unit = {},
+    onSelectPlaylistQuality: (String) -> Unit = {},
+    onStartPlaylistBatchDownload: () -> Unit = {}
 ) {
     val isReduceMotion = rememberIsReduceMotionEnabled()
     val haptic = LocalHapticFeedback.current
@@ -206,90 +243,13 @@ fun HomeScreenContent(
                             }
                         )
 
-                        if (uiState.availableStreams.isNotEmpty() && !isCarousel) {
-                            QualityChipRow(
-                                availableStreams = uiState.availableStreams,
-                                selectedStream = uiState.selectedStream,
-                                onSelectStream = onSelectStream
-                            )
-                        }
-
-                        if (isCarousel) {
-                            // Two buttons for carousel: Download Current Slide & Download All
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Button(
-                                    onClick = {
-                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        activeCarouselSlide?.let { onStartDownload(it) }
-                                    },
-                                    enabled = !uiState.isEnqueuing,
-                                    shape = CircleShape,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(52.dp),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                        contentColor = MaterialTheme.colorScheme.onSurface,
-                                        disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
-                                    )
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Download,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        text = "Save Slide",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-
-                                Button(
-                                    onClick = {
-                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        onStartBatchDownload(uiState.availableStreams)
-                                    },
-                                    enabled = !uiState.isEnqueuing,
-                                    shape = CircleShape,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(52.dp),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = MaterialTheme.colorScheme.primary,
-                                        contentColor = MaterialTheme.colorScheme.onPrimary,
-                                        disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
-                                    )
-                                ) {
-                                    if (uiState.isEnqueuing) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(20.dp),
-                                            strokeWidth = 2.dp,
-                                            color = MaterialTheme.colorScheme.onPrimary
-                                        )
-                                    } else {
-                                        Text(
-                                            text = "Save All",
-                                            style = MaterialTheme.typography.titleMedium,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
-                                }
-                            }
-                        } else {
-                            // Large filled Download button (full width, pill)
+                        if (media.isPlaylist) {
                             Button(
                                 onClick = {
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    onStartDownload(null)
+                                    onStartPlaylistBatchDownload()
                                 },
-                                enabled = !uiState.isEnqueuing && uiState.selectedStream != null && uiState.availableStreams.isNotEmpty(),
+                                enabled = !uiState.isEnqueuing && uiState.selectedPlaylistVideoIds.isNotEmpty(),
                                 shape = CircleShape,
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -309,7 +269,7 @@ fun HomeScreenContent(
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = "Queuing Download...",
+                                        text = "Queuing ${uiState.playlistEnqueueProgress ?: "..."}...",
                                         style = MaterialTheme.typography.titleMedium
                                     )
                                 } else {
@@ -320,10 +280,142 @@ fun HomeScreenContent(
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = "Download",
+                                        text = "Download Selected (${uiState.selectedPlaylistVideoIds.size})",
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.Bold
                                     )
+                                }
+                            }
+
+                            PlaylistSelectionCard(
+                                playlistItems = media.playlistItems,
+                                totalPlaylistCount = media.totalPlaylistCount,
+                                selectedVideoIds = uiState.selectedPlaylistVideoIds,
+                                selectedQuality = uiState.playlistQuality,
+                                onToggleVideo = onTogglePlaylistVideo,
+                                onSelectAll = onSelectAllPlaylistVideos,
+                                onSelectQuality = onSelectPlaylistQuality
+                            )
+                        } else {
+                            if (uiState.availableStreams.isNotEmpty() && !isCarousel) {
+                                QualityChipRow(
+                                    availableStreams = uiState.availableStreams,
+                                    selectedStream = uiState.selectedStream,
+                                    onSelectStream = onSelectStream
+                                )
+                            }
+
+                            if (isCarousel) {
+                                // Two buttons for carousel: Download Current Slide & Download All
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Button(
+                                        onClick = {
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            activeCarouselSlide?.let { onStartDownload(it) }
+                                        },
+                                        enabled = !uiState.isEnqueuing,
+                                        shape = CircleShape,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(52.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                            contentColor = MaterialTheme.colorScheme.onSurface,
+                                            disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                                        )
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Download,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "Save Slide",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+
+                                    Button(
+                                        onClick = {
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            onStartBatchDownload(uiState.availableStreams)
+                                        },
+                                        enabled = !uiState.isEnqueuing,
+                                        shape = CircleShape,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(52.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = MaterialTheme.colorScheme.primary,
+                                            contentColor = MaterialTheme.colorScheme.onPrimary,
+                                            disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                                        )
+                                    ) {
+                                        if (uiState.isEnqueuing) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(20.dp),
+                                                strokeWidth = 2.dp,
+                                                color = MaterialTheme.colorScheme.onPrimary
+                                            )
+                                        } else {
+                                            Text(
+                                                text = "Save All",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
+                            } else {
+                                // Large filled Download button (full width, pill)
+                                Button(
+                                    onClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        onStartDownload(null)
+                                    },
+                                    enabled = !uiState.isEnqueuing && uiState.selectedStream != null && uiState.availableStreams.isNotEmpty(),
+                                    shape = CircleShape,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(52.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.primary,
+                                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                                        disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                                    )
+                                ) {
+                                    if (uiState.isEnqueuing) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(20.dp),
+                                            strokeWidth = 2.dp,
+                                            color = MaterialTheme.colorScheme.onPrimary
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "Queuing Download...",
+                                            style = MaterialTheme.typography.titleMedium
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Download,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "Download",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -340,6 +432,233 @@ fun HomeScreenContent(
         ) { snackbarData ->
             AppSnackbar(snackbarData = snackbarData)
         }
+    }
+}
+
+private const val PLAYLIST_PAGE_SIZE = 50
+
+@Composable
+private fun PlaylistSelectionCard(
+    playlistItems: List<PlaylistItem>,
+    totalPlaylistCount: Int?,
+    selectedVideoIds: Set<String>,
+    selectedQuality: String,
+    onToggleVideo: (String) -> Unit,
+    onSelectAll: (Boolean) -> Unit,
+    onSelectQuality: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val allSelected = playlistItems.isNotEmpty() && selectedVideoIds.size == playlistItems.size
+    val qualityOptions = listOf("1080p", "720p", "480p", "360p", "Audio")
+    var filterQuery by remember(playlistItems) { mutableStateOf("") }
+    var visibleCount by remember(playlistItems, filterQuery) { mutableIntStateOf(PLAYLIST_PAGE_SIZE) }
+
+    val indexedItems = remember(playlistItems) {
+        playlistItems.mapIndexed { index, item -> (index + 1) to item }
+    }
+    val trimmedQuery = filterQuery.trim()
+    val filteredItems = remember(indexedItems, trimmedQuery) {
+        if (trimmedQuery.isBlank()) {
+            indexedItems
+        } else {
+            indexedItems.filter { (number, item) ->
+                number.toString() == trimmedQuery ||
+                    item.title.contains(trimmedQuery, ignoreCase = true) ||
+                    (item.author?.contains(trimmedQuery, ignoreCase = true) == true)
+            }
+        }
+    }
+    val visibleItems = remember(filteredItems, visibleCount) {
+        filteredItems.take(visibleCount)
+    }
+
+    Card(
+        shape = CardShape,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        modifier = modifier
+            .fillMaxWidth()
+            .border(width = 1.dp, color = MaterialTheme.colorScheme.outlineVariant, shape = CardShape)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Rounded.PlaylistPlay,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = "Batch Quality",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                qualityOptions.forEach { quality ->
+                    val isSelected = selectedQuality.equals(quality, ignoreCase = true)
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = { onSelectQuality(quality) },
+                        label = { Text(quality, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
+                        shape = ChipShape,
+                        colors = FilterChipDefaults.filterChipColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                            selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    )
+                }
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "${selectedVideoIds.size} of ${playlistItems.size} selected",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    if (totalPlaylistCount != null && totalPlaylistCount > playlistItems.size) {
+                        Text(
+                            text = "Showing ${playlistItems.size} of $totalPlaylistCount videos",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                TextButton(onClick = { onSelectAll(!allSelected) }) {
+                    Text(if (allSelected) "Clear All" else "Select All")
+                }
+            }
+
+            if (playlistItems.size > 10) {
+                OutlinedTextField(
+                    value = filterQuery,
+                    onValueChange = { filterQuery = it },
+                    singleLine = true,
+                    placeholder = { Text("Filter videos by title or number...") },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Rounded.Search,
+                            contentDescription = null
+                        )
+                    },
+                    trailingIcon = {
+                        if (filterQuery.isNotEmpty()) {
+                            IconButton(onClick = { filterQuery = "" }) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Close,
+                                    contentDescription = "Clear filter"
+                                )
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            if (filteredItems.isEmpty() && filterQuery.isNotBlank()) {
+                Text(
+                    text = "No videos match \"$filterQuery\"",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 8.dp)
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    visibleItems.forEach { (number, item) ->
+                        val checked = item.videoId in selectedVideoIds
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onToggleVideo(item.videoId) }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = checked,
+                                onCheckedChange = { onToggleVideo(item.videoId) }
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "$number. ${item.title}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                val meta = listOfNotNull(
+                                    item.author?.takeIf { it.isNotBlank() },
+                                    item.durationSeconds?.takeIf { it > 0 }?.let { formatPlaylistDuration(it) }
+                                ).joinToString(" • ")
+                                if (meta.isNotBlank()) {
+                                    Text(
+                                        text = meta,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (filteredItems.size > visibleCount) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Text(
+                    text = "Showing ${visibleItems.size} of ${filteredItems.size} videos",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val remaining = filteredItems.size - visibleCount
+                    val nextBatch = minOf(PLAYLIST_PAGE_SIZE, remaining)
+                    TextButton(onClick = { visibleCount += PLAYLIST_PAGE_SIZE }) {
+                        Text("Show $nextBatch More")
+                    }
+                    TextButton(onClick = { visibleCount = filteredItems.size }) {
+                        Text("Show All (${filteredItems.size})")
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun formatPlaylistDuration(seconds: Int): String {
+    val hours = seconds / 3600
+    val minutes = (seconds % 3600) / 60
+    val secs = seconds % 60
+    return if (hours > 0) {
+        String.format("%d:%02d:%02d", hours, minutes, secs)
+    } else {
+        String.format("%d:%02d", minutes, secs)
     }
 }
 

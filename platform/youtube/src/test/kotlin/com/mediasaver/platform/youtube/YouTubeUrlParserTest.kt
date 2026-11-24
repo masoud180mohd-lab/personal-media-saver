@@ -94,4 +94,23 @@ class YouTubeUrlParserTest {
     fun `buildCanonicalWatchUrl throws for invalid video ID length`() {
         YouTubeUrlParser.buildCanonicalWatchUrl("tooShort")
     }
+
+    @Test
+    fun `extractPlaylistId and isPlaylistOnlyUrl handle playlist URLs accurately`() {
+        val playlistId = "PLrAXtmErZgOeiKm4sgNOknGvNjby9efdf"
+        val playlistUrl = "https://www.youtube.com/playlist?list=$playlistId"
+        val musicPlaylistUrl = "https://music.youtube.com/playlist?list=$playlistId&si=abc123"
+        val watchWithPlaylist = "https://www.youtube.com/watch?v=$validVideoId&list=$playlistId&index=2"
+
+        assertTrue(YouTubeUrlParser.isYouTubeUrl(playlistUrl))
+        assertTrue(YouTubeUrlParser.isYouTubeUrl(musicPlaylistUrl))
+        assertTrue(YouTubeUrlParser.isPlaylistOnlyUrl(playlistUrl))
+        assertTrue(YouTubeUrlParser.isPlaylistOnlyUrl(musicPlaylistUrl))
+        assertFalse(YouTubeUrlParser.isPlaylistOnlyUrl(watchWithPlaylist))
+
+        assertEquals(playlistId, YouTubeUrlParser.extractPlaylistId(playlistUrl))
+        assertEquals(playlistId, YouTubeUrlParser.extractPlaylistId(musicPlaylistUrl))
+        assertEquals(playlistId, YouTubeUrlParser.extractPlaylistId(watchWithPlaylist))
+        assertEquals("https://www.youtube.com/playlist?list=$playlistId", YouTubeUrlParser.buildCanonicalPlaylistUrl(playlistId))
+    }
 }

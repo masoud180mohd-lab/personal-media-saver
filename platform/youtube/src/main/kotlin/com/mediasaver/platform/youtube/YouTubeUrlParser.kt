@@ -37,6 +37,13 @@ object YouTubeUrlParser {
         Pattern.CASE_INSENSITIVE
     )
 
+    private val PLAYLIST_ID_PATTERN = Pattern.compile("^[a-zA-Z0-9_-]{10,64}$")
+
+    private val PLAYLIST_URL_PATTERN = Pattern.compile(
+        "^https?://(?:(?:www|m|music)\\.)?youtube\\.com/playlist.*[?&]list=([a-zA-Z0-9_-]{10,64})(?:[&#].*)?$",
+        Pattern.CASE_INSENSITIVE
+    )
+
     /**
      * Determines whether the given URL matches a known YouTube domain and structure.
      */
@@ -48,7 +55,45 @@ object YouTubeUrlParser {
         val isYouTubeDomain = lower.contains("youtube.com") || lower.contains("youtu.be")
         if (!isYouTubeDomain) return false
 
-        return extractVideoId(trimmed) != null
+        return extractVideoId(trimmed) != null || extractPlaylistId(trimmed) != null
+    }
+
+    /**
+     * Returns true if the URL targets a YouTube playlist rather than a single video watch URL.
+     */
+    fun isPlaylistOnlyUrl(url: String): Boolean {
+        if (url.isBlank()) return false
+        val trimmed = url.trim()
+        extractPlaylistId(trimmed) ?: return false
+        return PLAYLIST_URL_PATTERN.matcher(trimmed).matches() || extractVideoId(trimmed) == null
+    }
+
+    /**
+     * Extracts the YouTube playlist ID from a `/playlist?list=...` or query `list=...` URL.
+     */
+    fun extractPlaylistId(url: String): String? {
+        if (url.isBlank()) return null
+        val trimmed = url.trim()
+        val lower = trimmed.lowercase()
+        if (!lower.contains("youtube.com") && !lower.contains("youtu.be")) return null
+
+        PLAYLIST_URL_PATTERN.matcher(trimmed).let { matcher ->
+            if (matcher.matches()) return matcher.group(1)
+        }
+
+        val queryPart = trimmed.substringAfter("?", "").substringBefore("#")
+        if (queryPart.isNotBlank()) {
+            for (param in queryPart.split("&")) {
+                val parts = param.split("=")
+                if (parts.size == 2 && parts[0].equals("list", ignoreCase = true)) {
+                    val candidate = parts[1]
+                    if (PLAYLIST_ID_PATTERN.matcher(candidate).matches()) {
+                        return candidate
+                    }
+                }
+            }
+        }
+        return null
     }
 
     /**
@@ -136,5 +181,13 @@ object YouTubeUrlParser {
     fun buildCanonicalWatchUrl(videoId: String): String {
         require(VIDEO_ID_PATTERN.matcher(videoId).matches()) { "Invalid YouTube video ID: $videoId" }
         return "https://www.youtube.com/watch?v=$videoId"
+    }
+
+    /**
+     * Builds canonical web playlist URL from a playlist ID.
+     */
+    fun buildCanonicalPlaylistUrl(playlistId: String): String {
+        require(PLAYLIST_ID_PATTERN.matcher(playlistId).matches()) { "Invalid YouTube playlist ID: $playlistId" }
+        return "https://www.youtube.com/playlist?list=$playlistId"
     }
 }
