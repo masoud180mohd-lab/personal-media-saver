@@ -9,7 +9,10 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.NonCancellable
 import com.mediasaver.core.common.SecurityUtils
 import com.mediasaver.core.database.dao.DownloadDao
+import com.mediasaver.core.download.metadata.CoverArtFetcher
+import com.mediasaver.core.download.metadata.Mp4MetadataTagger
 import com.mediasaver.core.download.muxing.MuxingEngine
+import com.mediasaver.core.model.AudioMetadata
 import com.mediasaver.core.model.PlatformId
 import com.mediasaver.core.model.StreamInfo
 import com.mediasaver.core.model.error.AppError
@@ -56,8 +59,25 @@ class DownloadWorker @Inject constructor(
     private val tempFileManager: TempFileManager,
     private val mediaStoreManager: MediaStoreManager,
     private val muxingEngine: MuxingEngine,
-    private val ephemeralHeaders: EphemeralStreamHeaders = EphemeralStreamHeaders()
+    private val ephemeralHeaders: EphemeralStreamHeaders,
+    private val coverArtFetcher: CoverArtFetcher
 ) {
+    constructor(
+        okHttpClient: OkHttpClient,
+        downloadDao: DownloadDao,
+        tempFileManager: TempFileManager,
+        mediaStoreManager: MediaStoreManager,
+        muxingEngine: MuxingEngine,
+        ephemeralHeaders: EphemeralStreamHeaders = EphemeralStreamHeaders()
+    ) : this(
+        okHttpClient = okHttpClient,
+        downloadDao = downloadDao,
+        tempFileManager = tempFileManager,
+        mediaStoreManager = mediaStoreManager,
+        muxingEngine = muxingEngine,
+        ephemeralHeaders = ephemeralHeaders,
+        coverArtFetcher = CoverArtFetcher(okHttpClient)
+    )
 
     private val duplicates = DuplicateDetector(downloadDao)
     private val publicationMutex = Mutex()
@@ -83,11 +103,13 @@ class DownloadWorker @Inject constructor(
         platform: PlatformId,
         videoStream: StreamInfo,
         audioStream: StreamInfo? = null,
-        subfolder: String? = null
+        subfolder: String? = null,
+        audioMetadata: AudioMetadata? = null
     ): Result<String> = withContext(Dispatchers.IO) {
         val tempFile = tempFileManager.createTempDownloadFile(downloadId)
         val tempVideoFile = if (audioStream != null) tempFileManager.createTempDownloadFile(downloadId, "_vid.tmp") else tempFile
         val tempAudioFile = if (audioStream != null) tempFileManager.createTempDownloadFile(downloadId, "_aud.tmp") else null
+        var taggedTempFile: File? = null
 
         // Security: sanitize target filename and ensure whitelisted extension
         val fileObj = File(targetFileName)
@@ -136,9 +158,31 @@ class DownloadWorker @Inject constructor(
                 java.io.DataInputStream(input).readFully(header)
                 MediaPayload.verify(null, header, videoStream)
             }
+            val publishFile = if (kind == MediaPayload.M4A && audioMetadata?.hasAnyTag == true) {
+                val coverArt = try {
+                    audioMetadata.coverArtUrl?.let { coverArtFetcher.fetch(it) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    null
+                }
+                val candidate = tempFileManager.createTempDownloadFile(downloadId, "_tagged.tmp")
+                taggedTempFile = candidate
+                if (Mp4MetadataTagger.tag(finalLocalFile, candidate, audioMetadata, coverArt) &&
+                    candidate.length() > 0L
+                ) {
+                    candidate
+                } else {
+                    tempFileManager.deleteTempFile(candidate)
+                    taggedTempFile = null
+                    finalLocalFile
+                }
+            } else {
+                finalLocalFile
+            }
             val name = "$safeBaseName.${kind.extension}"
-            val totalFileSize = finalLocalFile.length()
-            val duplicate = duplicates.checkAfterDownload(finalLocalFile)
+            val totalFileSize = publishFile.length()
+            val duplicate = duplicates.checkAfterDownload(publishFile)
             val hash = requireNotNull(duplicate.fileHash)
             val uriString = publicationMutex.withLock {
                 coroutineContext.ensureActive()
@@ -146,9 +190,9 @@ class DownloadWorker @Inject constructor(
                 withContext(NonCancellable) {
                     val existing = duplicate.existingTask?.filePath ?: downloadDao.findByFileHash(hash)?.filePath
                     val created = if (existing != null) null else when {
-                        kind.mime.startsWith("image/") -> mediaStoreManager.saveImage(finalLocalFile, name, platform, kind.mime, subfolder = subfolder)
-                        kind.mime.startsWith("audio/") -> mediaStoreManager.saveAudio(finalLocalFile, name, platform, kind.mime, subfolder = subfolder)
-                        else -> mediaStoreManager.saveVideo(finalLocalFile, name, platform, kind.mime, subfolder = subfolder)
+                        kind.mime.startsWith("image/") -> mediaStoreManager.saveImage(publishFile, name, platform, kind.mime, subfolder = subfolder)
+                        kind.mime.startsWith("audio/") -> mediaStoreManager.saveAudio(publishFile, name, platform, kind.mime, subfolder = subfolder, metadata = audioMetadata)
+                        else -> mediaStoreManager.saveVideo(publishFile, name, platform, kind.mime, subfolder = subfolder)
                     }.getOrThrow()
                     val path = existing ?: requireNotNull(created).toString()
                     try {
@@ -160,6 +204,7 @@ class DownloadWorker @Inject constructor(
                     path
                 }
             }
+            tempFileManager.deleteTempFile(taggedTempFile)
             tempFileManager.deleteTempFile(finalLocalFile)
 
             _progressFlow.emit(
@@ -196,6 +241,7 @@ class DownloadWorker @Inject constructor(
                 throw e
             }
             // Clean up temporary files on cancellation
+            tempFileManager.deleteTempFile(taggedTempFile)
             tempFileManager.deleteTempFile(tempFile)
             tempFileManager.deleteTempFile(tempVideoFile)
             tempFileManager.deleteTempFile(tempAudioFile)
@@ -205,6 +251,7 @@ class DownloadWorker @Inject constructor(
             throw e
         } catch (e: Exception) {
             pauseRequestedIds.remove(downloadId)
+            tempFileManager.deleteTempFile(taggedTempFile)
             tempFileManager.deleteTempFile(tempFile)
             tempFileManager.deleteTempFile(tempVideoFile)
             tempFileManager.deleteTempFile(tempAudioFile)
@@ -220,6 +267,7 @@ class DownloadWorker @Inject constructor(
         val (origin, hosts) = when (platform) {
             PlatformId.INSTAGRAM -> "https://www.instagram.com" to PlatformWebDomain("instagram.com", "cdninstagram.com", "fbcdn.net")
             PlatformId.FACEBOOK -> "https://www.facebook.com" to PlatformWebDomain("facebook.com", "fb.watch", "fbcdn.net")
+            PlatformId.TWITTER -> "https://x.com" to PlatformWebDomain("x.com", "twitter.com", "t.co", "twimg.com")
             PlatformId.YOUTUBE -> "https://www.youtube.com" to PlatformWebDomain("youtube.com", "googlevideo.com")
             PlatformId.TIKTOK -> "https://www.tiktok.com" to PlatformWebDomain(
                 "tiktok.com", "tiktokcdn.com", "tiktokcdn-us.com",

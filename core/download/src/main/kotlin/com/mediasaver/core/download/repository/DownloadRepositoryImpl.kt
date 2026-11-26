@@ -100,6 +100,7 @@ class DownloadRepositoryImpl @Inject constructor(
     }
 
     private fun DownloadEntity.toDomain(): DownloadTask {
+        val meta = DownloadQueueManager.decodeTaskMeta(description)
         return DownloadTask(
             id = id,
             url = url,
@@ -122,7 +123,11 @@ class DownloadRepositoryImpl @Inject constructor(
             completedAt = completedAt,
             durationSeconds = durationSeconds,
             errorMessage = errorMessage,
-            subfolder = DownloadQueueManager.decodeSubfolder(description)
+            subfolder = meta.subfolder,
+            artist = meta.artist,
+            album = meta.album,
+            trackNumber = meta.trackNumber,
+            totalTracks = meta.totalTracks
         )
     }
 }

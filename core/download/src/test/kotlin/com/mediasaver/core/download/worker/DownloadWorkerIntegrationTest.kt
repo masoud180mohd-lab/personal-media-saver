@@ -721,4 +721,152 @@ class DownloadWorkerIntegrationTest {
         org.junit.Assert.assertFalse(sanitizedPath.contains(".."))
         assertEquals(4, sanitizedPath.split('/').size)
     }
+
+    @Test
+    fun `audio download embeds ID3-like M4A atoms and JPEG cover art plus writes MediaStore audio columns`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val sourceM4a = java.io.File(context.cacheDir, "source_tag_test.m4a")
+        val mediaPayload = "M4A_INTEGRATION_PAYLOAD_XYZ".toByteArray()
+        com.mediasaver.core.download.metadata.Mp4MetadataTaggerTest.writeSyntheticMp4(
+            dest = sourceM4a,
+            moovBeforeMdat = true,
+            mediaPayload = mediaPayload
+        )
+        val rawM4aBytes = sourceM4a.readBytes()
+        sourceM4a.delete()
+
+        val jpegCover = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte(), 0x07, 0x08, 0x09)
+        val sinkFile = java.io.File(context.cacheDir, "published_tagged_audio.m4a")
+        val audioUri = ContentUris.withAppendedId(
+            MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
+            701L
+        )
+        var capturedValues: android.content.ContentValues? = null
+
+        val provider = object : android.content.ContentProvider() {
+            override fun onCreate(): Boolean = true
+            override fun query(
+                uri: android.net.Uri,
+                projection: Array<out String>?,
+                selection: String?,
+                selectionArgs: Array<out String>?,
+                sortOrder: String?
+            ): android.database.Cursor? = null
+            override fun getType(uri: android.net.Uri): String? = null
+            override fun insert(uri: android.net.Uri, values: android.content.ContentValues?): android.net.Uri? {
+                capturedValues = values?.let { android.content.ContentValues(it) }
+                return audioUri
+            }
+            override fun delete(uri: android.net.Uri, selection: String?, selectionArgs: Array<out String>?): Int = 1
+            override fun update(
+                uri: android.net.Uri,
+                values: android.content.ContentValues?,
+                selection: String?,
+                selectionArgs: Array<out String>?
+            ): Int = 1
+            override fun openFile(uri: android.net.Uri, mode: String): android.os.ParcelFileDescriptor? {
+                return android.os.ParcelFileDescriptor.open(
+                    sinkFile,
+                    android.os.ParcelFileDescriptor.MODE_CREATE or
+                        android.os.ParcelFileDescriptor.MODE_TRUNCATE or
+                        android.os.ParcelFileDescriptor.MODE_READ_WRITE
+                )
+            }
+        }
+        provider.attachInfo(
+            context,
+            android.content.pm.ProviderInfo().apply {
+                authority = MediaStore.AUTHORITY
+                exported = true
+            }
+        )
+        org.robolectric.shadows.ShadowContentResolver.registerProviderInternal(MediaStore.AUTHORITY, provider)
+
+        val audioUrl = mockWebServer.url("/lesson04.m4a").toString()
+        val coverServer = MockWebServer()
+        coverServer.start()
+        try {
+            mockWebServer.enqueue(
+                MockResponse()
+                    .setHeader("Content-Type", "audio/mp4")
+                    .setBody(okio.Buffer().write(rawM4aBytes))
+            )
+            coverServer.enqueue(
+                MockResponse()
+                    .setHeader("Content-Type", "image/jpeg")
+                    .setBody(okio.Buffer().write(jpegCover))
+            )
+
+            val coverClient = OkHttpClient.Builder().addInterceptor { chain ->
+                val original = chain.request()
+                val local = coverServer.url("/").newBuilder()
+                    .encodedPath(original.url.encodedPath)
+                    .build()
+                chain.proceed(original.newBuilder().url(local).build())
+                    .newBuilder().request(original).build()
+            }.build()
+
+            val workerWithCover = DownloadWorker(
+                okHttpClient = okHttpClient,
+                downloadDao = appDatabase.downloadDao(),
+                tempFileManager = tempFileManager,
+                mediaStoreManager = mediaStoreManager,
+                muxingEngine = DefaultMuxingEngine(),
+                ephemeralHeaders = ephemeralHeaders,
+                coverArtFetcher = com.mediasaver.core.download.metadata.CoverArtFetcher(coverClient)
+            )
+
+            appDatabase.downloadDao().insert(
+                com.mediasaver.core.database.entity.DownloadEntity(
+                    id = "tag-dl-1",
+                    url = audioUrl,
+                    platform = "YOUTUBE",
+                    mediaId = "vidTag#audio",
+                    title = "04 - Fiqh Lesson",
+                    status = "QUEUED"
+                )
+            )
+
+            workerWithCover.executeDownload(
+                downloadId = "tag-dl-1",
+                targetFileName = "04 - Fiqh Lesson.m4a",
+                platform = PlatformId.YOUTUBE,
+                videoStream = StreamInfo(
+                    url = audioUrl,
+                    quality = "128 kbps",
+                    format = "m4a",
+                    mimeType = "audio/mp4",
+                    isAudioOnly = true,
+                    fileSize = rawM4aBytes.size.toLong()
+                ),
+                subfolder = "Fiqh Series",
+                audioMetadata = com.mediasaver.core.model.AudioMetadata(
+                    title = "04 - Fiqh Lesson",
+                    artist = "Ustadh Salim",
+                    album = "Fiqh Series",
+                    trackNumber = 4,
+                    totalTracks = 20,
+                    coverArtUrl = "https://i.ytimg.com/vi/vidTag/hqdefault.jpg"
+                )
+            ).getOrThrow()
+
+            val tags = com.mediasaver.core.download.metadata.Mp4MetadataTagger.readTags(sinkFile)
+            assertEquals("04 - Fiqh Lesson", tags.title)
+            assertEquals("Ustadh Salim", tags.artist)
+            assertEquals("Fiqh Series", tags.album)
+            assertEquals(4, tags.trackNumber)
+            assertEquals(20, tags.totalTracks)
+            assertEquals(com.mediasaver.core.download.metadata.Mp4MetadataTagger.DEFAULT_ENCODER, tags.encoder)
+            org.junit.Assert.assertArrayEquals(jpegCover, tags.coverArt?.bytes)
+
+            val cv = requireNotNull(capturedValues)
+            assertEquals("04 - Fiqh Lesson", cv.getAsString(MediaStore.Audio.AudioColumns.TITLE))
+            assertEquals("Ustadh Salim", cv.getAsString(MediaStore.Audio.AudioColumns.ARTIST))
+            assertEquals("Fiqh Series", cv.getAsString(MediaStore.Audio.AudioColumns.ALBUM))
+            assertEquals(4, cv.getAsInteger(MediaStore.Audio.AudioColumns.TRACK))
+        } finally {
+            coverServer.shutdown()
+            sinkFile.delete()
+        }
+    }
 }

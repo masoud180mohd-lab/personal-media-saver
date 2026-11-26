@@ -159,7 +159,8 @@ class HomeViewModel @Inject constructor(
                         val task = DownloadTask(id = UUID.randomUUID().toString(), url = media.sourceUrl,
                             platform = media.platform, mediaId = media.id, title = media.title, thumbnailUrl = primary.thumbnailUrl ?: media.thumbnailUrl,
                             status = DownloadStatus.QUEUED, selectedQuality = primary.quality, selectedFormat = primary.format,
-                            mimeType = primary.mimeType, totalBytes = primary.fileSize, durationSeconds = media.durationSeconds)
+                            mimeType = primary.mimeType, totalBytes = primary.fileSize, durationSeconds = media.durationSeconds,
+                            artist = media.author?.takeIf { it.isNotBlank() })
                         enqueueDownloadUseCase(task, primary, audio)
                         enqueuedCount++
                     } catch (e: CancellationException) {
@@ -322,7 +323,11 @@ class HomeViewModel @Inject constructor(
                             mimeType = primary.mimeType,
                             totalBytes = primary.fileSize,
                             durationSeconds = item.durationSeconds,
-                            subfolder = playlistSubfolder
+                            subfolder = playlistSubfolder,
+                            artist = (item.author ?: media.author)?.takeIf { it.isNotBlank() },
+                            album = media.title?.takeIf { it.isNotBlank() },
+                            trackNumber = episodeNumber,
+                            totalTracks = totalPlaylistItems
                         )
                         enqueueDownloadUseCase(task, primary, audio)
                         enqueuedCount++

@@ -306,6 +306,7 @@ fun HomeScreenContent(
                                 PlatformId.WHATSAPP -> "WhatsApp"
                                 PlatformId.INSTAGRAM -> "Instagram"
                                 PlatformId.FACEBOOK -> "Facebook"
+                                PlatformId.TWITTER -> "X"
                                 PlatformId.UNKNOWN -> "Downloads"
                             }
                             PlaylistSelectionCard(

@@ -7,6 +7,7 @@ import android.os.Build
 import android.provider.MediaStore
 import com.mediasaver.core.common.FileNameSanitizer
 import com.mediasaver.core.common.SecurityUtils
+import com.mediasaver.core.model.AudioMetadata
 import com.mediasaver.core.model.PlatformId
 import com.mediasaver.core.model.error.AppError
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -56,7 +57,8 @@ class MediaStoreManager @Inject constructor(
         fileName: String,
         platform: PlatformId,
         mimeType: String = "audio/mp4",
-        subfolder: String? = null
+        subfolder: String? = null,
+        metadata: AudioMetadata? = null
     ): Result<Uri> {
         val cleanMime = mimeType.substringBefore(';').trim().lowercase()
         val primaryResult = save(
@@ -71,7 +73,8 @@ class MediaStoreManager @Inject constructor(
             } else {
                 MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
             },
-            subfolder = subfolder
+            subfolder = subfolder,
+            audioMetadata = metadata
         )
         val err = primaryResult.exceptionOrNull()
         val unsupportedMime = err is IllegalArgumentException || err?.cause is IllegalArgumentException
@@ -103,7 +106,8 @@ class MediaStoreManager @Inject constructor(
         directory: String,
         defaultExtension: String,
         collectionUri: Uri,
-        subfolder: String? = null
+        subfolder: String? = null,
+        audioMetadata: AudioMetadata? = null
     ): Result<Uri> = withContext(Dispatchers.IO) {
         runCatching {
             val fileObj = File(fileName)
@@ -117,6 +121,7 @@ class MediaStoreManager @Inject constructor(
                 PlatformId.WHATSAPP -> "WhatsApp"
                 PlatformId.INSTAGRAM -> "Instagram"
                 PlatformId.FACEBOOK -> "Facebook"
+                PlatformId.TWITTER -> "X"
                 PlatformId.UNKNOWN -> "Downloads"
             }
             val safeSubfolder = subfolder
@@ -132,6 +137,20 @@ class MediaStoreManager @Inject constructor(
             val contentValues = ContentValues().apply {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, sanitizedFileName)
                 put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                if (directory == "Music" && audioMetadata != null) {
+                    audioMetadata.title?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                        put(MediaStore.Audio.AudioColumns.TITLE, it)
+                    }
+                    audioMetadata.artist?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                        put(MediaStore.Audio.AudioColumns.ARTIST, it)
+                    }
+                    audioMetadata.album?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                        put(MediaStore.Audio.AudioColumns.ALBUM, it)
+                    }
+                    audioMetadata.trackNumber?.takeIf { it > 0 }?.let {
+                        put(MediaStore.Audio.AudioColumns.TRACK, it)
+                    }
+                }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
                     put(MediaStore.MediaColumns.IS_PENDING, 1)

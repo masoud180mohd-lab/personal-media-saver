@@ -87,6 +87,14 @@ class PlatformDetectorTest {
     }
 
     @Test
+    fun `detects X and Twitter status and short URLs`() {
+        assertEquals(PlatformId.TWITTER, PlatformDetector.detect("https://x.com/user/status/123"))
+        assertEquals(PlatformId.TWITTER, PlatformDetector.detect("https://twitter.com/user/status/123"))
+        assertEquals(PlatformId.TWITTER, PlatformDetector.detect("https://mobile.x.com/user/status/123"))
+        assertEquals(PlatformId.TWITTER, PlatformDetector.detect("https://t.co/Ab9"))
+    }
+
+    @Test
     fun `detects WhatsApp local URI scheme`() {
         val url = "whatsapp://status/media_item"
         assertEquals(PlatformId.WHATSAPP, PlatformDetector.detect(url))
@@ -108,6 +116,7 @@ class PlatformDetectorTest {
         assertTrue(PlatformDetector.isSupported("https://vm.tiktok.com/abc"))
         assertTrue(PlatformDetector.isSupported("https://instagram.com/p/xyz"))
         assertTrue(PlatformDetector.isSupported("https://facebook.com/watch/?v=123"))
+        assertTrue(PlatformDetector.isSupported("https://x.com/user/status/123"))
         assertFalse(PlatformDetector.isSupported("https://vimeo.com/12345"))
     }
 }

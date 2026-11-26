@@ -20,6 +20,7 @@ data class MediaInfo(
     val platform: PlatformId,
     val title: String?,
     val description: String? = null,
+    val author: String? = null,
     val thumbnailUrl: String? = null,
     val durationSeconds: Int? = null,
     val sourceUrl: String,

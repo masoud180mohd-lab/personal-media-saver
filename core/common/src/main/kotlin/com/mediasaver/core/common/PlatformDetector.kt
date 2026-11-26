@@ -33,6 +33,12 @@ object PlatformDetector {
         "fb.watch"
     )
 
+    private val TWITTER_HOSTS = setOf(
+        "x.com",
+        "twitter.com",
+        "t.co"
+    )
+
     /**
      * Identifies the platform from an input URL string.
      *
@@ -73,6 +79,10 @@ object PlatformDetector {
 
         if (FACEBOOK_HOSTS.any { normalizedHost == it || normalizedHost.endsWith(".$it") }) {
             return PlatformId.FACEBOOK
+        }
+
+        if (TWITTER_HOSTS.any { normalizedHost == it || normalizedHost.endsWith(".$it") }) {
+            return PlatformId.TWITTER
         }
 
         return PlatformId.UNKNOWN

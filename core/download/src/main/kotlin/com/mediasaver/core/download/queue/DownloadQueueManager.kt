@@ -12,6 +12,7 @@ import com.mediasaver.core.download.retry.RetryPolicy
 import com.mediasaver.core.download.service.DownloadService
 import com.mediasaver.core.download.worker.DownloadProgress
 import com.mediasaver.core.download.worker.DownloadWorker
+import com.mediasaver.core.model.AudioMetadata
 import com.mediasaver.core.model.DownloadStatus
 import com.mediasaver.core.model.DownloadTask
 import com.mediasaver.core.model.PlatformId
@@ -430,6 +431,15 @@ class DownloadQueueManager(
 
                     val targetFileName = "${taskEntity.title ?: "media"}.${videoStream.format ?: "mp4"}"
                     val platform = PlatformId.fromString(taskEntity.platform)
+                    val meta = decodeTaskMeta(taskEntity.description)
+                    val audioMetadata = AudioMetadata(
+                        title = taskEntity.title,
+                        artist = meta.artist,
+                        album = meta.album ?: meta.subfolder,
+                        trackNumber = meta.trackNumber,
+                        totalTracks = meta.totalTracks,
+                        coverArtUrl = taskEntity.thumbnailUrl
+                    )
 
                     val job = queueScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
                         try {
@@ -439,7 +449,8 @@ class DownloadQueueManager(
                                 platform = platform,
                                 videoStream = videoStream,
                                 audioStream = audioStream,
-                                subfolder = decodeSubfolder(taskEntity.description)
+                                subfolder = meta.subfolder,
+                                audioMetadata = audioMetadata
                             )
                             if (result.isFailure) {
                                 val error = result.exceptionOrNull() ?: Exception("Download failed")
@@ -477,6 +488,7 @@ class DownloadQueueManager(
     }
 
     private fun DownloadEntity.toDomain(): DownloadTask {
+        val meta = decodeTaskMeta(description)
         return DownloadTask(
             id = id,
             url = url,
@@ -499,7 +511,11 @@ class DownloadQueueManager(
             completedAt = completedAt,
             durationSeconds = durationSeconds,
             errorMessage = errorMessage,
-            subfolder = decodeSubfolder(description)
+            subfolder = meta.subfolder,
+            artist = meta.artist,
+            album = meta.album,
+            trackNumber = meta.trackNumber,
+            totalTracks = meta.totalTracks
         )
     }
 
@@ -510,7 +526,13 @@ class DownloadQueueManager(
             platform = platform.name,
             mediaId = mediaId,
             title = title,
-            description = encodeSubfolder(subfolder),
+            description = encodeTaskMeta(
+                subfolder = subfolder,
+                artist = artist,
+                album = album,
+                trackNumber = trackNumber,
+                totalTracks = totalTracks
+            ),
             thumbnailUrl = thumbnailUrl,
             status = status.name,
             selectedQuality = selectedQuality,
@@ -530,22 +552,84 @@ class DownloadQueueManager(
         )
     }
 
+    internal data class TaskMeta(
+        val subfolder: String? = null,
+        val artist: String? = null,
+        val album: String? = null,
+        val trackNumber: Int? = null,
+        val totalTracks: Int? = null
+    )
+
     companion object {
         internal const val WIFI_ONLY_MESSAGE =
             "Wi-Fi Only mode is enabled. Connect to Wi-Fi or disable Wi-Fi Only in Settings."
 
         internal const val SUBFOLDER_PREFIX = "folder:"
+        private const val ARTIST_PREFIX = "artist:"
+        private const val ALBUM_PREFIX = "album:"
+        private const val TRACK_PREFIX = "track:"
 
-        internal fun encodeSubfolder(subfolder: String?): String? {
-            return subfolder?.trim()?.takeIf { it.isNotBlank() }?.let { "$SUBFOLDER_PREFIX$it" }
+        private fun cleanMetaLine(value: String?): String? =
+            value?.replace('\r', ' ')?.replace('\n', ' ')?.trim()?.takeIf { it.isNotEmpty() }
+
+        internal fun encodeSubfolder(subfolder: String?): String? =
+            encodeTaskMeta(subfolder = subfolder)
+
+        internal fun encodeTaskMeta(
+            subfolder: String? = null,
+            artist: String? = null,
+            album: String? = null,
+            trackNumber: Int? = null,
+            totalTracks: Int? = null
+        ): String? {
+            val lines = buildList {
+                cleanMetaLine(subfolder)?.let { add("$SUBFOLDER_PREFIX$it") }
+                cleanMetaLine(artist)?.let { add("$ARTIST_PREFIX$it") }
+                cleanMetaLine(album)?.let { add("$ALBUM_PREFIX$it") }
+                if (trackNumber != null && trackNumber > 0) {
+                    val total = totalTracks?.takeIf { it > 0 }
+                    add(if (total != null) "$TRACK_PREFIX$trackNumber/$total" else "$TRACK_PREFIX$trackNumber")
+                }
+            }
+            return lines.takeIf { it.isNotEmpty() }?.joinToString("\n")
         }
 
-        internal fun decodeSubfolder(description: String?): String? {
-            return description
-                ?.takeIf { it.startsWith(SUBFOLDER_PREFIX) }
-                ?.removePrefix(SUBFOLDER_PREFIX)
-                ?.takeIf { it.isNotBlank() }
+        internal fun decodeTaskMeta(description: String?): TaskMeta {
+            if (description.isNullOrBlank()) return TaskMeta()
+            var subfolder: String? = null
+            var artist: String? = null
+            var album: String? = null
+            var trackNumber: Int? = null
+            var totalTracks: Int? = null
+
+            for (rawLine in description.split('\n')) {
+                val line = rawLine.trimEnd('\r')
+                when {
+                    line.startsWith(SUBFOLDER_PREFIX) ->
+                        subfolder = line.removePrefix(SUBFOLDER_PREFIX).trim().takeIf { it.isNotEmpty() }
+                    line.startsWith(ARTIST_PREFIX) ->
+                        artist = line.removePrefix(ARTIST_PREFIX).trim().takeIf { it.isNotEmpty() }
+                    line.startsWith(ALBUM_PREFIX) ->
+                        album = line.removePrefix(ALBUM_PREFIX).trim().takeIf { it.isNotEmpty() }
+                    line.startsWith(TRACK_PREFIX) -> {
+                        val rawTrack = line.removePrefix(TRACK_PREFIX).trim()
+                        val parts = rawTrack.split('/', limit = 2)
+                        trackNumber = parts.getOrNull(0)?.toIntOrNull()?.takeIf { it > 0 }
+                        totalTracks = parts.getOrNull(1)?.toIntOrNull()?.takeIf { it > 0 }
+                    }
+                }
+            }
+            return TaskMeta(
+                subfolder = subfolder,
+                artist = artist,
+                album = album,
+                trackNumber = trackNumber,
+                totalTracks = totalTracks
+            )
         }
+
+        internal fun decodeSubfolder(description: String?): String? =
+            decodeTaskMeta(description).subfolder
 
         internal fun isWifiOrUnmeteredConnected(context: Context): Boolean {
             val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager

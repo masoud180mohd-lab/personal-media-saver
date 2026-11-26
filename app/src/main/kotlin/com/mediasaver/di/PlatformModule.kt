@@ -5,6 +5,7 @@ import com.mediasaver.core.domain.platform.PlatformResolver
 import com.mediasaver.platform.facebook.FacebookAdapter
 import com.mediasaver.platform.instagram.InstagramAdapter
 import com.mediasaver.platform.tiktok.TikTokAdapter
+import com.mediasaver.platform.twitter.TwitterAdapter
 import com.mediasaver.platform.whatsapp.WhatsAppAdapter
 import com.mediasaver.platform.youtube.YouTubeAdapter
 import dagger.Module
@@ -28,14 +29,16 @@ object PlatformModule {
         tikTokAdapter: TikTokAdapter,
         whatsAppAdapter: WhatsAppAdapter,
         instagramAdapter: InstagramAdapter,
-        facebookAdapter: FacebookAdapter
+        facebookAdapter: FacebookAdapter,
+        twitterAdapter: TwitterAdapter
     ): @JvmSuppressWildcards List<PlatformAdapter> {
         return listOf(
             youTubeAdapter,
             tikTokAdapter,
             whatsAppAdapter,
             instagramAdapter,
-            facebookAdapter
+            facebookAdapter,
+            twitterAdapter
         )
     }
 }

@@ -361,6 +361,13 @@ class HomeViewModelTest {
             listOf("Lugha (Nah-wu)_ Full_Series", "Lugha (Nah-wu)_ Full_Series", "Lugha (Nah-wu)_ Full_Series"),
             queuedTasks.map { it.subfolder }
         )
+        assertEquals(listOf("Teacher", "Teacher", "Teacher"), queuedTasks.map { it.artist })
+        assertEquals(
+            listOf("Lugha (Nah-wu): Full/Series", "Lugha (Nah-wu): Full/Series", "Lugha (Nah-wu): Full/Series"),
+            queuedTasks.map { it.album }
+        )
+        assertEquals(listOf(1, 12, 15), queuedTasks.map { it.trackNumber })
+        assertEquals(listOf(100, 100, 100), queuedTasks.map { it.totalTracks })
 
         // Turning off both toggles preserves raw titles and clears subfolder
         queuedTasks.clear()

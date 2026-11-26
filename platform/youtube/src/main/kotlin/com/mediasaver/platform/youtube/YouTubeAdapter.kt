@@ -143,6 +143,7 @@ class YouTubeAdapter @Inject constructor(
                     platform = PlatformId.YOUTUBE,
                     title = info.name,
                     description = info.description?.content,
+                    author = info.uploaderName?.takeIf { it.isNotBlank() },
                     thumbnailUrl = bestThumbnail,
                     durationSeconds = info.duration.toInt(),
                     sourceUrl = canonicalUrl
@@ -199,6 +200,7 @@ class YouTubeAdapter @Inject constructor(
                     platform = PlatformId.YOUTUBE,
                     title = playlistInfo.name?.takeIf { it.isNotBlank() } ?: "YouTube Playlist (${items.size} videos)",
                     description = playlistInfo.uploaderName,
+                    author = playlistInfo.uploaderName?.takeIf { it.isNotBlank() },
                     thumbnailUrl = bestThumbnail,
                     durationSeconds = totalDuration,
                     sourceUrl = canonicalUrl,

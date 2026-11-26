@@ -16,6 +16,7 @@ import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.OndemandVideo
 import androidx.compose.material.icons.rounded.PlayCircle
+import androidx.compose.material.icons.rounded.Tag
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -44,6 +45,7 @@ fun PlatformId.getBrandColor(): Color = when (this) {
     PlatformId.WHATSAPP -> PlatformWhatsApp
     PlatformId.INSTAGRAM -> PlatformInstagram
     PlatformId.FACEBOOK -> PlatformFacebook
+    PlatformId.TWITTER -> PlatformTwitter
     PlatformId.UNKNOWN -> PlatformUnknown
 }
 
@@ -53,6 +55,7 @@ fun PlatformId.getIcon(): ImageVector = when (this) {
     PlatformId.WHATSAPP -> Icons.AutoMirrored.Rounded.Chat
     PlatformId.INSTAGRAM -> Icons.Rounded.CameraAlt
     PlatformId.FACEBOOK -> Icons.Rounded.OndemandVideo
+    PlatformId.TWITTER -> Icons.Rounded.Tag
     PlatformId.UNKNOWN -> Icons.Rounded.Link
 }
 
@@ -62,6 +65,7 @@ fun PlatformId.getDisplayName(): String = when (this) {
     PlatformId.WHATSAPP -> "WhatsApp"
     PlatformId.INSTAGRAM -> "Instagram"
     PlatformId.FACEBOOK -> "Facebook"
+    PlatformId.TWITTER -> "X (Twitter)"
     PlatformId.UNKNOWN -> "Generic"
 }
 

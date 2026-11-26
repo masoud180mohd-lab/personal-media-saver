@@ -257,7 +257,8 @@ fun HistoryScreenContent(
                         PlatformId.TIKTOK to "TikTok",
                         PlatformId.WHATSAPP to "WhatsApp",
                         PlatformId.INSTAGRAM to "Instagram",
-                        PlatformId.FACEBOOK to "Facebook"
+                        PlatformId.FACEBOOK to "Facebook",
+                        PlatformId.TWITTER to "X"
                     )
 
                     platforms.forEach { (platform, label) ->

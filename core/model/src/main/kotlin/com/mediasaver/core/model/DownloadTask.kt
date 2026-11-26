@@ -25,7 +25,11 @@ data class DownloadTask(
     val completedAt: Long? = null,
     val durationSeconds: Int? = null,
     val errorMessage: String? = null,
-    val subfolder: String? = null
+    val subfolder: String? = null,
+    val artist: String? = null,
+    val album: String? = null,
+    val trackNumber: Int? = null,
+    val totalTracks: Int? = null
 ) {
     val progressFraction: Float
         get() = if (totalBytes != null && totalBytes > 0) {

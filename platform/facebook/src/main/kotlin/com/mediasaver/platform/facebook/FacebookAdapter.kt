@@ -65,6 +65,7 @@ class FacebookAdapter @Inject constructor(
                 platform = platformId,
                 title = video.title ?: "Facebook video",
                 description = video.author,
+                author = video.author?.takeIf { it.isNotBlank() },
                 thumbnailUrl = video.thumbnailUrl,
                 sourceUrl = canonical
             )
