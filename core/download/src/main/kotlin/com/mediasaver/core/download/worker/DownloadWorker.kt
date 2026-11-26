@@ -26,7 +26,9 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -59,9 +61,18 @@ class DownloadWorker @Inject constructor(
 
     private val duplicates = DuplicateDetector(downloadDao)
     private val publicationMutex = Mutex()
+    private val pauseRequestedIds = ConcurrentHashMap.newKeySet<String>()
 
     private val _progressFlow = MutableSharedFlow<DownloadProgress>(replay = 1)
     val progressFlow: Flow<DownloadProgress> = _progressFlow.asSharedFlow()
+
+    fun markPauseRequested(downloadId: String) {
+        pauseRequestedIds.add(downloadId)
+    }
+
+    fun clearPauseRequest(downloadId: String) {
+        pauseRequestedIds.remove(downloadId)
+    }
 
     /**
      * Executes a complete download lifecycle for a task.
@@ -71,7 +82,8 @@ class DownloadWorker @Inject constructor(
         targetFileName: String,
         platform: PlatformId,
         videoStream: StreamInfo,
-        audioStream: StreamInfo? = null
+        audioStream: StreamInfo? = null,
+        subfolder: String? = null
     ): Result<String> = withContext(Dispatchers.IO) {
         val tempFile = tempFileManager.createTempDownloadFile(downloadId)
         val tempVideoFile = if (audioStream != null) tempFileManager.createTempDownloadFile(downloadId, "_vid.tmp") else tempFile
@@ -134,9 +146,9 @@ class DownloadWorker @Inject constructor(
                 withContext(NonCancellable) {
                     val existing = duplicate.existingTask?.filePath ?: downloadDao.findByFileHash(hash)?.filePath
                     val created = if (existing != null) null else when {
-                        kind.mime.startsWith("image/") -> mediaStoreManager.saveImage(finalLocalFile, name, platform, kind.mime)
-                        kind.mime.startsWith("audio/") -> mediaStoreManager.saveAudio(finalLocalFile, name, platform, kind.mime)
-                        else -> mediaStoreManager.saveVideo(finalLocalFile, name, platform, kind.mime)
+                        kind.mime.startsWith("image/") -> mediaStoreManager.saveImage(finalLocalFile, name, platform, kind.mime, subfolder = subfolder)
+                        kind.mime.startsWith("audio/") -> mediaStoreManager.saveAudio(finalLocalFile, name, platform, kind.mime, subfolder = subfolder)
+                        else -> mediaStoreManager.saveVideo(finalLocalFile, name, platform, kind.mime, subfolder = subfolder)
                     }.getOrThrow()
                     val path = existing ?: requireNotNull(created).toString()
                     try {
@@ -162,6 +174,27 @@ class DownloadWorker @Inject constructor(
 
             Result.success(uriString)
         } catch (e: CancellationException) {
+            val isPaused = withContext(NonCancellable) {
+                pauseRequestedIds.remove(downloadId) || downloadDao.getById(downloadId)?.status == "PAUSED"
+            }
+            if (isPaused) {
+                withContext(NonCancellable) {
+                    val current = downloadDao.getById(downloadId)
+                    if (current != null && current.status != "COMPLETED") {
+                        val persistedBytes = if (audioStream != null) {
+                            (tempVideoFile.takeIf { it.exists() }?.length() ?: 0L) +
+                                (tempAudioFile?.takeIf { it.exists() }?.length() ?: 0L)
+                        } else {
+                            tempVideoFile.takeIf { it.exists() }?.length() ?: 0L
+                        }
+                        if (persistedBytes > 0L) {
+                            downloadDao.updateProgress(downloadId, persistedBytes, current.totalBytes)
+                        }
+                        downloadDao.markPaused(downloadId)
+                    }
+                }
+                throw e
+            }
             // Clean up temporary files on cancellation
             tempFileManager.deleteTempFile(tempFile)
             tempFileManager.deleteTempFile(tempVideoFile)
@@ -171,6 +204,7 @@ class DownloadWorker @Inject constructor(
             }
             throw e
         } catch (e: Exception) {
+            pauseRequestedIds.remove(downloadId)
             tempFileManager.deleteTempFile(tempFile)
             tempFileManager.deleteTempFile(tempVideoFile)
             tempFileManager.deleteTempFile(tempAudioFile)
@@ -185,6 +219,7 @@ class DownloadWorker @Inject constructor(
     private fun buildRequest(streamUrl: String, platform: PlatformId, rangeHeader: String? = null): Request {
         val (origin, hosts) = when (platform) {
             PlatformId.INSTAGRAM -> "https://www.instagram.com" to PlatformWebDomain("instagram.com", "cdninstagram.com", "fbcdn.net")
+            PlatformId.FACEBOOK -> "https://www.facebook.com" to PlatformWebDomain("facebook.com", "fb.watch", "fbcdn.net")
             PlatformId.YOUTUBE -> "https://www.youtube.com" to PlatformWebDomain("youtube.com", "googlevideo.com")
             PlatformId.TIKTOK -> "https://www.tiktok.com" to PlatformWebDomain(
                 "tiktok.com", "tiktokcdn.com", "tiktokcdn-us.com",
@@ -236,6 +271,31 @@ class DownloadWorker @Inject constructor(
         )
     }
 
+    private data class PartialFileInfo(
+        val length: Long,
+        val headerBytes: ByteArray,
+        val payload: MediaPayload
+    )
+
+    private fun inspectExistingPartialFile(file: File, stream: StreamInfo): PartialFileInfo? {
+        if (!file.exists() || file.length() < 12L) return null
+        val header = ByteArray(12)
+        val readCount = runCatching {
+            FileInputStream(file).use { input ->
+                var totalRead = 0
+                while (totalRead < header.size) {
+                    val read = input.read(header, totalRead, header.size - totalRead)
+                    if (read <= 0) break
+                    totalRead += read
+                }
+                totalRead
+            }
+        }.getOrNull() ?: return null
+        if (readCount < 12) return null
+        val payload = runCatching { MediaPayload.verify(stream.mimeType, header, stream) }.getOrNull() ?: return null
+        return PartialFileInfo(length = file.length(), headerBytes = header, payload = payload)
+    }
+
     private suspend fun downloadStreamToFile(
         downloadId: String,
         stream: StreamInfo,
@@ -249,40 +309,99 @@ class DownloadWorker @Inject constructor(
             return@withContext downloadChunkedRange(downloadId, stream, destinationFile, platform)
         }
 
-        val request = buildRequest(streamUrl, platform)
+        var partial = inspectExistingPartialFile(destinationFile, stream)
+        val expectedSize = stream.fileSize
+        if (partial != null && expectedSize != null && expectedSize > 0L && partial.length == expectedSize) {
+            return@withContext partial.payload
+        }
+
         var fallbackChunked = false
-        val directKind = okHttpClient.newCall(request).execute().use { resp ->
-            if (platform == PlatformId.YOUTUBE && resp.code == 403) {
-                fallbackChunked = true
-                null
+        var directKind: MediaPayload? = null
+
+        for (attempt in 0..1) {
+            val existingBytes = partial?.length ?: 0L
+            val request = if (existingBytes > 0L) {
+                buildRequest(streamUrl, platform, "bytes=$existingBytes-")
             } else {
+                buildRequest(streamUrl, platform)
+            }
+            var retryFromZero = false
+
+            okHttpClient.newCall(request).execute().use { resp ->
+                if (platform == PlatformId.YOUTUBE && resp.code == 403) {
+                    fallbackChunked = true
+                    return@use
+                }
+
+                if (existingBytes > 0L && resp.code == 416) {
+                    val totalFrom416 = resp.header("Content-Range")
+                        ?.substringAfter('/')
+                        ?.trim()
+                        ?.toLongOrNull()
+                    if (totalFrom416 != null && totalFrom416 == existingBytes) {
+                        directKind = partial!!.payload
+                        return@use
+                    }
+                    destinationFile.delete()
+                    partial = null
+                    retryFromZero = true
+                    return@use
+                }
+
                 if (!resp.isSuccessful) {
                     throw AppError.DownloadFailed(resp.code)
                 }
 
                 val body = resp.body ?: throw AppError.DownloadFailed(null)
-                val source = body.source()
-                source.request(12L)
-                val header = source.peek().readByteArray(minOf(12L, source.buffer.size))
-                val kind = MediaPayload.verify(resp.header("Content-Type"), header, stream)
+                val contentRange = resp.header("Content-Range")
+                val isExpectedPartial = existingBytes > 0L &&
+                    resp.code == 206 &&
+                    contentRange?.lowercase()?.startsWith("bytes $existingBytes-") == true
 
-                val totalBytes = body.contentLength().takeIf { it > 0 }
-                if (totalBytes != null && totalBytes > SecurityUtils.MAX_DOWNLOAD_SIZE_BYTES) {
-                    throw AppError.NetworkError(null, "Media file size ($totalBytes bytes) exceeds maximum allowed limit of 2GB.")
+                val kind: MediaPayload
+                val totalBytes: Long?
+                val startOffset: Long
+                val appendMode: Boolean
+
+                if (isExpectedPartial) {
+                    kind = MediaPayload.verify(resp.header("Content-Type"), partial!!.headerBytes, stream)
+                    val totalFromRange = contentRange?.substringAfter('/')?.trim()?.toLongOrNull()?.takeIf { it > 0L }
+                    val remainingLen = body.contentLength().takeIf { it > 0L }
+                    totalBytes = totalFromRange ?: remainingLen?.let { existingBytes + it }
+                    if (totalBytes != null && totalBytes > SecurityUtils.MAX_DOWNLOAD_SIZE_BYTES) {
+                        throw AppError.NetworkError(null, "Media file size ($totalBytes bytes) exceeds maximum allowed limit of 2GB.")
+                    }
+                    val neededBytes = remainingLen ?: totalBytes?.let { (it - existingBytes).coerceAtLeast(0L) }
+                    if (neededBytes != null && neededBytes > 0L && !tempFileManager.hasAvailableStorage(neededBytes)) {
+                        throw AppError.StorageFull(neededBytes)
+                    }
+                    startOffset = existingBytes
+                    appendMode = true
+                    emitTransferProgress(downloadId, startOffset, totalBytes, 0L)
+                } else {
+                    val source = body.source()
+                    source.request(12L)
+                    val header = source.peek().readByteArray(minOf(12L, source.buffer.size))
+                    kind = MediaPayload.verify(resp.header("Content-Type"), header, stream)
+
+                    totalBytes = body.contentLength().takeIf { it > 0L }
+                    if (totalBytes != null && totalBytes > SecurityUtils.MAX_DOWNLOAD_SIZE_BYTES) {
+                        throw AppError.NetworkError(null, "Media file size ($totalBytes bytes) exceeds maximum allowed limit of 2GB.")
+                    }
+                    if (totalBytes != null && !tempFileManager.hasAvailableStorage(totalBytes)) {
+                        throw AppError.StorageFull(totalBytes)
+                    }
+                    startOffset = 0L
+                    appendMode = false
                 }
 
-                // Check storage capacity
-                if (totalBytes != null && !tempFileManager.hasAvailableStorage(totalBytes)) {
-                    throw AppError.StorageFull(totalBytes)
-                }
-
-                var downloadedBytes = 0L
+                var downloadedBytes = startOffset
                 var lastDbUpdate = System.currentTimeMillis()
                 var speedStartTime = System.currentTimeMillis()
                 var speedBytesSample = 0L
                 var currentSpeed = 0L
 
-                destinationFile.outputStream().use { output ->
+                FileOutputStream(destinationFile, appendMode).use { output ->
                     body.byteStream().use { input ->
                         val buffer = ByteArray(8192)
                         var bytesRead: Int
@@ -318,12 +437,18 @@ class DownloadWorker @Inject constructor(
                         }
                     }
                 }
-                kind
+                directKind = kind
             }
+
+            if (fallbackChunked) {
+                return@withContext downloadChunkedRange(downloadId, stream, destinationFile, platform)
+            }
+            if (directKind != null) {
+                return@withContext directKind!!
+            }
+            if (!retryFromZero) break
         }
-        if (fallbackChunked) {
-            return@withContext downloadChunkedRange(downloadId, stream, destinationFile, platform)
-        }
+
         requireNotNull(directKind)
     }
 
@@ -335,102 +460,147 @@ class DownloadWorker @Inject constructor(
     ): MediaPayload = withContext(Dispatchers.IO) {
         val chunkSize = 1_048_576L
         val clen = stream.url.toHttpUrlOrNull()?.queryParameter("clen")?.toLongOrNull()?.takeIf { it > 0 }
-        var totalBytes: Long? = clen
-        var offset = 0L
-        var verifiedKind: MediaPayload? = null
-        var lastDbUpdate = System.currentTimeMillis()
-        var speedStartTime = System.currentTimeMillis()
-        var speedBytesSample = 0L
-        var currentSpeed = 0L
 
-        FileOutputStream(destinationFile, false).use { output ->
-            val buffer = ByteArray(8192)
-            while (offset < (totalBytes ?: Long.MAX_VALUE)) {
-                coroutineContext.ensureActive()
-                val offsetBeforeChunk = offset
-                val rangeEnd = totalBytes?.let { minOf(offset + chunkSize - 1, it - 1) } ?: (offset + chunkSize - 1)
-                val chunkRequest = buildRequest(stream.url, platform, "bytes=$offset-$rangeEnd")
-
-                var reachedEnd = false
-                okHttpClient.newCall(chunkRequest).execute().use { resp ->
-                    if (resp.code == 416 && offset > 0L && totalBytes == null) {
-                        reachedEnd = true
-                        return@use
-                    }
-                    if (platform == PlatformId.YOUTUBE && resp.code == 403) {
-                        throw AppError.DownloadFailed(
-                            403,
-                            userMessage = "YouTube blocked this high-resolution stream (HTTP 403). Try 360p or a shorter video."
-                        )
-                    }
-                    if (!resp.isSuccessful) {
-                        throw AppError.DownloadFailed(resp.code)
-                    }
-
-                    val body = resp.body ?: throw AppError.DownloadFailed(null)
-                    if (offset == 0L) {
-                        val source = body.source()
-                        source.request(12L)
-                        val header = source.peek().readByteArray(minOf(12L, source.buffer.size))
-                        verifiedKind = MediaPayload.verify(resp.header("Content-Type"), header, stream)
-
-                        totalBytes = if (resp.code == 206) {
-                            resp.header("Content-Range")?.substringAfter('/')?.trim()?.toLongOrNull()?.takeIf { it > 0 }
-                                ?: clen
-                        } else {
-                            body.contentLength().takeIf { it > 0 } ?: clen
-                        }
-                        val knownTotal = totalBytes
-                        if (knownTotal != null && knownTotal > SecurityUtils.MAX_DOWNLOAD_SIZE_BYTES) {
-                            throw AppError.NetworkError(null, "Media file size ($knownTotal bytes) exceeds maximum allowed limit of 2GB.")
-                        }
-                        if (knownTotal != null && !tempFileManager.hasAvailableStorage(knownTotal)) {
-                            throw AppError.StorageFull(knownTotal)
-                        }
-                    }
-
-                    var bytesThisChunk = 0L
-                    body.byteStream().use { input ->
-                        var bytesRead: Int
-                        while (input.read(buffer).also { bytesRead = it } != -1) {
-                            coroutineContext.ensureActive()
-                            bytesThisChunk += bytesRead
-                            offset += bytesRead
-                            if (offset > SecurityUtils.MAX_DOWNLOAD_SIZE_BYTES) {
-                                throw AppError.NetworkError(null, "Download stream exceeded maximum allowed limit of 2GB.")
-                            }
-                            output.write(buffer, 0, bytesRead)
-                            speedBytesSample += bytesRead
-
-                            val now = System.currentTimeMillis()
-                            if (now - speedStartTime >= 500) {
-                                val durationSec = (now - speedStartTime) / 1000.0
-                                if (durationSec > 0) {
-                                    currentSpeed = (speedBytesSample / durationSec).toLong()
-                                }
-                                speedStartTime = now
-                                speedBytesSample = 0L
-                            }
-                            if (now - lastDbUpdate >= 300) {
-                                emitTransferProgress(downloadId, offset, totalBytes, currentSpeed)
-                                lastDbUpdate = now
-                            }
-                        }
-                    }
-
-                    val expectedChunkLen = rangeEnd - offsetBeforeChunk + 1
-                    if (resp.code == 200 || (totalBytes == null && bytesThisChunk < expectedChunkLen)) {
-                        reachedEnd = true
-                    } else if (bytesThisChunk == 0L) {
-                        if (totalBytes != null && offset < totalBytes!!) {
-                            throw AppError.DownloadFailed(null)
-                        }
-                        reachedEnd = true
-                    }
-                }
-                if (reachedEnd) break
-            }
+        var partial = inspectExistingPartialFile(destinationFile, stream)
+        if (partial != null && clen != null && partial.length == clen) {
+            return@withContext partial.payload
         }
-        verifiedKind ?: throw AppError.DownloadFailed(null)
+
+        for (pass in 0..1) {
+            var totalBytes: Long? = clen
+            val canResume = partial != null && (clen == null || partial!!.length < clen)
+            var offset: Long
+            var verifiedKind: MediaPayload?
+            val appendMode: Boolean
+
+            if (canResume) {
+                offset = partial!!.length
+                verifiedKind = partial!!.payload
+                appendMode = true
+                emitTransferProgress(downloadId, offset, totalBytes, 0L)
+            } else {
+                if (destinationFile.exists()) destinationFile.delete()
+                offset = 0L
+                verifiedKind = null
+                appendMode = false
+            }
+
+            var restartFromZero = false
+            var lastDbUpdate = System.currentTimeMillis()
+            var speedStartTime = System.currentTimeMillis()
+            var speedBytesSample = 0L
+            var currentSpeed = 0L
+
+            FileOutputStream(destinationFile, appendMode).use { output ->
+                val buffer = ByteArray(8192)
+                while (offset < (totalBytes ?: Long.MAX_VALUE)) {
+                    coroutineContext.ensureActive()
+                    val offsetBeforeChunk = offset
+                    val rangeEnd = totalBytes?.let { minOf(offset + chunkSize - 1, it - 1) } ?: (offset + chunkSize - 1)
+                    val chunkRequest = buildRequest(stream.url, platform, "bytes=$offset-$rangeEnd")
+
+                    var reachedEnd = false
+                    okHttpClient.newCall(chunkRequest).execute().use { resp ->
+                        if (resp.code == 416 && offset > 0L) {
+                            val totalFrom416 = resp.header("Content-Range")
+                                ?.substringAfter('/')
+                                ?.trim()
+                                ?.toLongOrNull()
+                            if (totalBytes == null || (totalFrom416 != null && totalFrom416 == offset && verifiedKind != null)) {
+                                reachedEnd = true
+                                return@use
+                            }
+                        }
+                        if (platform == PlatformId.YOUTUBE && resp.code == 403) {
+                            throw AppError.DownloadFailed(
+                                403,
+                                userMessage = "YouTube blocked this high-resolution stream (HTTP 403). Try 360p or a shorter video."
+                            )
+                        }
+                        if (!resp.isSuccessful) {
+                            throw AppError.DownloadFailed(resp.code)
+                        }
+
+                        if (offsetBeforeChunk > 0L && resp.code == 200) {
+                            // Server ignored Range header and sent the full stream; restart cleanly from byte 0.
+                            restartFromZero = true
+                            return@use
+                        }
+
+                        val body = resp.body ?: throw AppError.DownloadFailed(null)
+                        if (offset == 0L) {
+                            val source = body.source()
+                            source.request(12L)
+                            val header = source.peek().readByteArray(minOf(12L, source.buffer.size))
+                            verifiedKind = MediaPayload.verify(resp.header("Content-Type"), header, stream)
+
+                            totalBytes = if (resp.code == 206) {
+                                resp.header("Content-Range")?.substringAfter('/')?.trim()?.toLongOrNull()?.takeIf { it > 0 }
+                                    ?: clen
+                            } else {
+                                body.contentLength().takeIf { it > 0 } ?: clen
+                            }
+                            val knownTotal = totalBytes
+                            if (knownTotal != null && knownTotal > SecurityUtils.MAX_DOWNLOAD_SIZE_BYTES) {
+                                throw AppError.NetworkError(null, "Media file size ($knownTotal bytes) exceeds maximum allowed limit of 2GB.")
+                            }
+                            if (knownTotal != null && !tempFileManager.hasAvailableStorage(knownTotal)) {
+                                throw AppError.StorageFull(knownTotal)
+                            }
+                        } else if (totalBytes == null && resp.code == 206) {
+                            totalBytes = resp.header("Content-Range")?.substringAfter('/')?.trim()?.toLongOrNull()?.takeIf { it > 0 }
+                        }
+
+                        var bytesThisChunk = 0L
+                        body.byteStream().use { input ->
+                            var bytesRead: Int
+                            while (input.read(buffer).also { bytesRead = it } != -1) {
+                                coroutineContext.ensureActive()
+                                bytesThisChunk += bytesRead
+                                offset += bytesRead
+                                if (offset > SecurityUtils.MAX_DOWNLOAD_SIZE_BYTES) {
+                                    throw AppError.NetworkError(null, "Download stream exceeded maximum allowed limit of 2GB.")
+                                }
+                                output.write(buffer, 0, bytesRead)
+                                speedBytesSample += bytesRead
+
+                                val now = System.currentTimeMillis()
+                                if (now - speedStartTime >= 500) {
+                                    val durationSec = (now - speedStartTime) / 1000.0
+                                    if (durationSec > 0) {
+                                        currentSpeed = (speedBytesSample / durationSec).toLong()
+                                    }
+                                    speedStartTime = now
+                                    speedBytesSample = 0L
+                                }
+                                if (now - lastDbUpdate >= 300) {
+                                    emitTransferProgress(downloadId, offset, totalBytes, currentSpeed)
+                                    lastDbUpdate = now
+                                }
+                            }
+                        }
+
+                        val expectedChunkLen = rangeEnd - offsetBeforeChunk + 1
+                        if (resp.code == 200 || (totalBytes == null && bytesThisChunk < expectedChunkLen)) {
+                            reachedEnd = true
+                        } else if (bytesThisChunk == 0L) {
+                            if (totalBytes != null && offset < totalBytes!!) {
+                                throw AppError.DownloadFailed(null)
+                            }
+                            reachedEnd = true
+                        }
+                    }
+                    if (restartFromZero || reachedEnd) break
+                }
+            }
+
+            if (restartFromZero && pass == 0) {
+                destinationFile.delete()
+                partial = null
+                continue
+            }
+            return@withContext verifiedKind ?: throw AppError.DownloadFailed(null)
+        }
+        throw AppError.DownloadFailed(null)
     }
 }

@@ -50,6 +50,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -57,6 +58,7 @@ import androidx.core.content.FileProvider
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.mediasaver.core.model.DownloadTask
 import com.mediasaver.core.model.PlatformId
+import com.mediasaver.core.ui.R as UiR
 import com.mediasaver.core.ui.components.AppSnackbar
 import com.mediasaver.core.ui.components.EmptyState
 import com.mediasaver.core.ui.components.HistoryRow
@@ -130,12 +132,16 @@ fun HistoryScreenContent(
         }
     }
 
+    val todayLabel = stringResource(UiR.string.history_today)
+    val yesterdayLabel = stringResource(UiR.string.history_yesterday)
+    val earlierLabel = stringResource(UiR.string.history_earlier)
+
     // Group items by day (Today, Yesterday, Date)
-    val groupedItems = remember(filteredItems) {
+    val groupedItems = remember(filteredItems, todayLabel, yesterdayLabel, earlierLabel) {
         val groups = linkedMapOf<String, MutableList<DownloadTask>>()
         filteredItems.forEach { task ->
             val timestamp = task.completedAt ?: task.createdAt
-            val dayHeader = getDayHeader(timestamp)
+            val dayHeader = getDayHeader(timestamp, todayLabel, yesterdayLabel, earlierLabel)
             groups.getOrPut(dayHeader) { mutableListOf() }.add(task)
         }
         groups
@@ -157,13 +163,13 @@ fun HistoryScreenContent(
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        text = "History",
+                        text = stringResource(UiR.string.history_title),
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = "Saved media stored locally on your device",
+                        text = stringResource(UiR.string.history_subtitle),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -173,7 +179,7 @@ fun HistoryScreenContent(
                     IconButton(onClick = onClearAll) {
                         Icon(
                             imageVector = Icons.Rounded.DeleteSweep,
-                            contentDescription = "Clear all history",
+                            contentDescription = stringResource(UiR.string.history_clear_all),
                             tint = MaterialTheme.colorScheme.error
                         )
                     }
@@ -190,8 +196,8 @@ fun HistoryScreenContent(
             } else if (uiState.completedItems.isEmpty()) {
                 EmptyState(
                     icon = Icons.Rounded.History,
-                    title = "No Download History",
-                    description = "Media you finish downloading will be archived here for offline playback and sharing.",
+                    title = stringResource(UiR.string.history_empty_title),
+                    description = stringResource(UiR.string.history_empty_description),
                     modifier = Modifier.fillMaxSize()
                 )
             } else {
@@ -202,7 +208,7 @@ fun HistoryScreenContent(
                     modifier = Modifier.fillMaxWidth(),
                     placeholder = {
                         Text(
-                            text = "Search saved media...",
+                            text = stringResource(UiR.string.history_search_hint),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -210,7 +216,7 @@ fun HistoryScreenContent(
                     leadingIcon = {
                         Icon(
                             imageVector = Icons.Rounded.Search,
-                            contentDescription = "Search",
+                            contentDescription = null,
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     },
@@ -219,7 +225,7 @@ fun HistoryScreenContent(
                             IconButton(onClick = { searchQuery = "" }) {
                                 Icon(
                                     imageVector = Icons.Rounded.Clear,
-                                    contentDescription = "Clear search",
+                                    contentDescription = stringResource(UiR.string.history_clear_search),
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
@@ -246,11 +252,12 @@ fun HistoryScreenContent(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     val platforms = listOf(
-                        null to "All",
+                        null to stringResource(UiR.string.history_all),
                         PlatformId.YOUTUBE to "YouTube",
                         PlatformId.TIKTOK to "TikTok",
                         PlatformId.WHATSAPP to "WhatsApp",
-                        PlatformId.INSTAGRAM to "Instagram"
+                        PlatformId.INSTAGRAM to "Instagram",
+                        PlatformId.FACEBOOK to "Facebook"
                     )
 
                     platforms.forEach { (platform, label) ->
@@ -293,7 +300,7 @@ fun HistoryScreenContent(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "No matching items found",
+                            text = stringResource(UiR.string.history_no_matches),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -340,21 +347,21 @@ fun HistoryScreenContent(
     }
 
     // Confirm Single Delete Dialog
-    uiState.itemPendingDelete?.let { pendingItem ->
+    uiState.itemPendingDelete?.let { _ ->
         AlertDialog(
             onDismissRequest = onCancelDelete,
             shape = CardShape,
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
             title = {
                 Text(
-                    text = "Delete from history?",
+                    text = stringResource(UiR.string.history_delete_dialog_title),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
             },
             text = {
                 Text(
-                    text = "Remove '${pendingItem.title ?: "this item"}' from your download history? (File remains in your gallery).",
+                    text = stringResource(UiR.string.history_delete_dialog_message),
                     style = MaterialTheme.typography.bodyMedium
                 )
             },
@@ -363,12 +370,12 @@ fun HistoryScreenContent(
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     onConfirmDelete()
                 }) {
-                    Text("Delete", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                    Text(stringResource(UiR.string.history_delete), color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = onCancelDelete) {
-                    Text("Cancel")
+                    Text(stringResource(UiR.string.common_cancel))
                 }
             }
         )
@@ -382,14 +389,14 @@ fun HistoryScreenContent(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
             title = {
                 Text(
-                    text = "Clear all history?",
+                    text = stringResource(UiR.string.history_clear_dialog_title),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
             },
             text = {
                 Text(
-                    text = "This will remove all completed download logs from the app. Downloaded media files in your storage will not be deleted.",
+                    text = stringResource(UiR.string.history_clear_dialog_message),
                     style = MaterialTheme.typography.bodyMedium
                 )
             },
@@ -398,20 +405,25 @@ fun HistoryScreenContent(
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     onConfirmClearAll()
                 }) {
-                    Text("Clear All", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                    Text(stringResource(UiR.string.history_clear_all_button), color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = onCancelClearAll) {
-                    Text("Cancel")
+                    Text(stringResource(UiR.string.common_cancel))
                 }
             }
         )
     }
 }
 
-private fun getDayHeader(timestamp: Long): String {
-    if (timestamp <= 0L) return "Earlier"
+private fun getDayHeader(
+    timestamp: Long,
+    todayLabel: String,
+    yesterdayLabel: String,
+    earlierLabel: String
+): String {
+    if (timestamp <= 0L) return earlierLabel
 
     val now = Calendar.getInstance()
     val target = Calendar.getInstance().apply { timeInMillis = timestamp }
@@ -419,13 +431,13 @@ private fun getDayHeader(timestamp: Long): String {
     val isToday = now.get(Calendar.YEAR) == target.get(Calendar.YEAR) &&
         now.get(Calendar.DAY_OF_YEAR) == target.get(Calendar.DAY_OF_YEAR)
 
-    if (isToday) return "Today"
+    if (isToday) return todayLabel
 
     val yesterday = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }
     val isYesterday = yesterday.get(Calendar.YEAR) == target.get(Calendar.YEAR) &&
         yesterday.get(Calendar.DAY_OF_YEAR) == target.get(Calendar.DAY_OF_YEAR)
 
-    if (isYesterday) return "Yesterday"
+    if (isYesterday) return yesterdayLabel
 
     val sdf = SimpleDateFormat("MMM d, yyyy", Locale.getDefault())
     return sdf.format(Date(timestamp))

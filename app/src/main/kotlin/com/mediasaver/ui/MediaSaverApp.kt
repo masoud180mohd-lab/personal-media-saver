@@ -30,8 +30,10 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.mediasaver.core.ui.R as UiR
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -83,8 +85,8 @@ fun MediaSaverApp(
                 title = {
                     Text(
                         text = when {
-                            isSettingsOpen -> "Settings"
-                            else -> "Personal Media Saver"
+                            isSettingsOpen -> stringResource(UiR.string.nav_settings)
+                            else -> stringResource(UiR.string.nav_app_name)
                         },
                         fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.titleMedium
@@ -95,7 +97,7 @@ fun MediaSaverApp(
                         IconButton(onClick = { navController.popBackStack() }) {
                             Icon(
                                 Icons.AutoMirrored.Rounded.ArrowBack,
-                                contentDescription = "Back"
+                                contentDescription = stringResource(UiR.string.common_back)
                             )
                         }
                     }
@@ -105,7 +107,7 @@ fun MediaSaverApp(
                         IconButton(onClick = { navController.navigate(Screen.Settings.route) }) {
                             Icon(
                                 Icons.Rounded.Settings,
-                                contentDescription = "Settings",
+                                contentDescription = stringResource(UiR.string.nav_settings),
                                 tint = MaterialTheme.colorScheme.onSurface
                             )
                         }
@@ -123,6 +125,13 @@ fun MediaSaverApp(
                 ) {
                     Screen.bottomNavItems.forEach { screen ->
                         val selected = currentRoute == screen.route
+                        val screenLabel = when (screen) {
+                            Screen.Home -> stringResource(UiR.string.nav_home)
+                            Screen.Downloads -> stringResource(UiR.string.nav_downloads)
+                            Screen.History -> stringResource(UiR.string.nav_history)
+                            Screen.Status -> stringResource(UiR.string.nav_status)
+                            Screen.Settings -> stringResource(UiR.string.nav_settings)
+                        }
 
                         NavigationBarItem(
                             selected = selected,
@@ -146,13 +155,13 @@ fun MediaSaverApp(
                                             }
                                         }
                                     ) {
-                                        Icon(screen.icon, contentDescription = screen.title)
+                                        Icon(screen.icon, contentDescription = screenLabel)
                                     }
                                 } else {
-                                    Icon(screen.icon, contentDescription = screen.title)
+                                    Icon(screen.icon, contentDescription = screenLabel)
                                 }
                             },
-                            label = { Text(screen.title) }
+                            label = { Text(screenLabel) }
                         )
                     }
                 }

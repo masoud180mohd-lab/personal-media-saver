@@ -25,15 +25,39 @@ class MediaStoreManager @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
 
-    suspend fun saveVideo(sourceFile: File, fileName: String, platform: PlatformId, mimeType: String = "video/mp4") =
-        save(sourceFile, fileName, platform, mimeType, "Movies", "mp4", if (Build.VERSION.SDK_INT >= 29)
-            MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY) else MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
+    suspend fun saveVideo(
+        sourceFile: File,
+        fileName: String,
+        platform: PlatformId,
+        mimeType: String = "video/mp4",
+        subfolder: String? = null
+    ) = save(
+        sourceFile, fileName, platform, mimeType, "Movies", "mp4",
+        if (Build.VERSION.SDK_INT >= 29) MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        else MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+        subfolder = subfolder
+    )
 
-    suspend fun saveImage(sourceFile: File, fileName: String, platform: PlatformId, mimeType: String = "image/jpeg") =
-        save(sourceFile, fileName, platform, mimeType, "Pictures", "jpg", if (Build.VERSION.SDK_INT >= 29)
-            MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY) else MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
+    suspend fun saveImage(
+        sourceFile: File,
+        fileName: String,
+        platform: PlatformId,
+        mimeType: String = "image/jpeg",
+        subfolder: String? = null
+    ) = save(
+        sourceFile, fileName, platform, mimeType, "Pictures", "jpg",
+        if (Build.VERSION.SDK_INT >= 29) MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        else MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+        subfolder = subfolder
+    )
 
-    suspend fun saveAudio(sourceFile: File, fileName: String, platform: PlatformId, mimeType: String = "audio/mp4"): Result<Uri> {
+    suspend fun saveAudio(
+        sourceFile: File,
+        fileName: String,
+        platform: PlatformId,
+        mimeType: String = "audio/mp4",
+        subfolder: String? = null
+    ): Result<Uri> {
         val cleanMime = mimeType.substringBefore(';').trim().lowercase()
         val primaryResult = save(
             sourceFile = sourceFile,
@@ -46,7 +70,8 @@ class MediaStoreManager @Inject constructor(
                 MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
             } else {
                 MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-            }
+            },
+            subfolder = subfolder
         )
         val err = primaryResult.exceptionOrNull()
         val unsupportedMime = err is IllegalArgumentException || err?.cause is IllegalArgumentException
@@ -58,7 +83,8 @@ class MediaStoreManager @Inject constructor(
                 mimeType = cleanMime.ifBlank { "application/octet-stream" },
                 directory = "Download",
                 defaultExtension = File(fileName).extension.ifBlank { "m4a" },
-                collectionUri = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                collectionUri = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
+                subfolder = subfolder
             )
         }
         return primaryResult
@@ -69,8 +95,16 @@ class MediaStoreManager @Inject constructor(
         context.contentResolver.delete(uri, null, null)
     }
 
-    private suspend fun save(sourceFile: File, fileName: String, platform: PlatformId, mimeType: String,
-        directory: String, defaultExtension: String, collectionUri: Uri): Result<Uri> = withContext(Dispatchers.IO) {
+    private suspend fun save(
+        sourceFile: File,
+        fileName: String,
+        platform: PlatformId,
+        mimeType: String,
+        directory: String,
+        defaultExtension: String,
+        collectionUri: Uri,
+        subfolder: String? = null
+    ): Result<Uri> = withContext(Dispatchers.IO) {
         runCatching {
             val fileObj = File(fileName)
             val safeExt = SecurityUtils.normalizeExtension(fileObj.extension, defaultExtension)
@@ -82,9 +116,18 @@ class MediaStoreManager @Inject constructor(
                 PlatformId.TIKTOK -> "TikTok"
                 PlatformId.WHATSAPP -> "WhatsApp"
                 PlatformId.INSTAGRAM -> "Instagram"
+                PlatformId.FACEBOOK -> "Facebook"
                 PlatformId.UNKNOWN -> "Downloads"
             }
-            val relativePath = "$directory/MediaSaver/$platformFolder"
+            val safeSubfolder = subfolder
+                ?.takeIf { it.isNotBlank() }
+                ?.let { FileNameSanitizer.sanitize(it, fallback = "").take(60).trimEnd('.', '_', '-', ' ') }
+                ?.takeIf { it.isNotBlank() }
+            val relativePath = if (safeSubfolder != null) {
+                "$directory/MediaSaver/$platformFolder/$safeSubfolder"
+            } else {
+                "$directory/MediaSaver/$platformFolder"
+            }
 
             val contentValues = ContentValues().apply {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, sanitizedFileName)

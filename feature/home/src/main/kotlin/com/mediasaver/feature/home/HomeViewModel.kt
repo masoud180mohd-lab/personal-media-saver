@@ -2,6 +2,7 @@ package com.mediasaver.feature.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.mediasaver.core.common.FileNameSanitizer
 import com.mediasaver.core.common.PlatformDetector
 import com.mediasaver.core.domain.usecase.EnqueueDownloadUseCase
 import com.mediasaver.core.domain.usecase.GetSettingsUseCase
@@ -240,14 +241,27 @@ class HomeViewModel @Inject constructor(
         _uiState.update { it.copy(playlistQuality = quality) }
     }
 
+    fun onToggleOrganizeInPlaylistFolder(enabled: Boolean) {
+        _uiState.update { it.copy(organizeInPlaylistFolder = enabled) }
+    }
+
+    fun onToggleNumberPlaylistEpisodes(enabled: Boolean) {
+        _uiState.update { it.copy(numberPlaylistEpisodes = enabled) }
+    }
+
     fun startPlaylistBatchDownload() {
         val state = _uiState.value
         val media = state.mediaInfo ?: return
         if (!media.isPlaylist || state.isEnqueuing) return
-        val selectedItems = media.playlistItems.filter { it.videoId in state.selectedPlaylistVideoIds }
+        val totalPlaylistItems = media.playlistItems.size
+        val selectedItems = media.playlistItems
+            .mapIndexed { idx, item -> (idx + 1) to item }
+            .filter { (_, item) -> item.videoId in state.selectedPlaylistVideoIds }
         if (selectedItems.isEmpty()) return
 
         val targetQuality = state.playlistQuality
+        val playlistSubfolder = if (state.organizeInPlaylistFolder) sanitizePlaylistFolderName(media.title) else null
+        val numberEpisodes = state.numberPlaylistEpisodes
         _uiState.update {
             it.copy(
                 isEnqueuing = true,
@@ -262,7 +276,8 @@ class HomeViewModel @Inject constructor(
                 var skippedDuplicates = 0
                 var firstError: Exception? = null
 
-                for ((index, item) in selectedItems.withIndex()) {
+                for ((index, entry) in selectedItems.withIndex()) {
+                    val (episodeNumber, item) = entry
                     _uiState.update {
                         it.copy(playlistEnqueueProgress = "${index + 1}/${selectedItems.size}")
                     }
@@ -289,19 +304,25 @@ class HomeViewModel @Inject constructor(
                             chosen
                         }
 
+                        val resolvedTitle = if (numberEpisodes) {
+                            formatPlaylistEpisodeTitle(episodeNumber, totalPlaylistItems, item.title)
+                        } else {
+                            item.title
+                        }
                         val task = DownloadTask(
                             id = UUID.randomUUID().toString(),
                             url = item.url,
                             platform = media.platform,
                             mediaId = item.videoId,
-                            title = item.title,
+                            title = resolvedTitle,
                             thumbnailUrl = primary.thumbnailUrl ?: item.thumbnailUrl ?: media.thumbnailUrl,
                             status = DownloadStatus.QUEUED,
                             selectedQuality = primary.quality,
                             selectedFormat = primary.format,
                             mimeType = primary.mimeType,
                             totalBytes = primary.fileSize,
-                            durationSeconds = item.durationSeconds
+                            durationSeconds = item.durationSeconds,
+                            subfolder = playlistSubfolder
                         )
                         enqueueDownloadUseCase(task, primary, audio)
                         enqueuedCount++
@@ -416,5 +437,24 @@ class HomeViewModel @Inject constructor(
                 mime in setOf("audio/mp4", "audio/m4a", "audio/mpeg", "audio/aac", "audio/ogg")
         }
         return (compatible.ifEmpty { audioStreams }).maxByOrNull { it.bitrate ?: 0 }
+    }
+
+    internal fun sanitizePlaylistFolderName(rawTitle: String?): String? {
+        return FileNameSanitizer.sanitize(rawTitle, fallback = "")
+            .take(60)
+            .trimEnd('.', '_', '-', ' ')
+            .ifBlank { null }
+    }
+
+    internal fun formatPlaylistEpisodeTitle(
+        episodeNumber: Int,
+        totalCount: Int,
+        rawTitle: String
+    ): String {
+        val padWidth = maxOf(2, totalCount.coerceAtLeast(1).toString().length)
+        val prefix = episodeNumber.toString().padStart(padWidth, '0')
+        val trimmed = rawTitle.trim().ifBlank { "Episode $prefix" }
+        val alreadyNumbered = Regex("^0*$episodeNumber\\s*[-._)]\\s+").containsMatchIn(trimmed)
+        return if (alreadyNumbered) trimmed else "$prefix - $trimmed"
     }
 }

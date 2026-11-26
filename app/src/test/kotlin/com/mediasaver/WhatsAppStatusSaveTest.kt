@@ -126,6 +126,7 @@ class WhatsAppStatusSaveTest {
         override suspend fun updateSaveDownloadHistory(enabled: Boolean) {}
         override suspend fun updateAutoDeleteTempFiles(enabled: Boolean) {}
         override suspend fun updateThemeMode(themeMode: ThemeMode) {}
+        override suspend fun updateLanguageCode(languageCode: String) {}
         override suspend fun resetToDefaults() {}
     }
 

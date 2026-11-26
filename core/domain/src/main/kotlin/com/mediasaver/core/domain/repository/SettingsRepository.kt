@@ -39,5 +39,7 @@ interface SettingsRepository {
 
     suspend fun updateThemeMode(themeMode: ThemeMode)
 
+    suspend fun updateLanguageCode(languageCode: String)
+
     suspend fun resetToDefaults()
 }

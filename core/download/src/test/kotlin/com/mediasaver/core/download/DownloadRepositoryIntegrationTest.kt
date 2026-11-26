@@ -158,6 +158,7 @@ class DownloadRepositoryIntegrationTest {
             override suspend fun updateSaveDownloadHistory(enabled: Boolean) {}
             override suspend fun updateAutoDeleteTempFiles(enabled: Boolean) {}
             override suspend fun updateThemeMode(themeMode: com.mediasaver.core.model.ThemeMode) {}
+            override suspend fun updateLanguageCode(languageCode: String) {}
             override suspend fun resetToDefaults() {}
         }
 
@@ -235,5 +236,142 @@ class DownloadRepositoryIntegrationTest {
         }
         org.junit.Assert.assertTrue(duplicateAudio.exceptionOrNull() is com.mediasaver.core.model.error.AppError.DuplicateDownload)
         org.junit.Assert.assertNull(appDatabase.downloadDao().getById("aud-task-2"))
+    }
+
+    @Test
+    fun `pause, resume, bulk queue actions, startup recovery for PAUSED tasks, and wifiOnly enforcement work`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val dao = appDatabase.downloadDao()
+        val tempFiles = TempFileManager(context)
+        val worker = DownloadWorker(OkHttpClient(), dao, tempFiles, MediaStoreManager(context), DefaultMuxingEngine())
+        val queue = DownloadQueueManager(context, dao, appDatabase.streamOptionDao(), worker, tempFiles, RetryPolicy())
+        queue.maxConcurrentDownloads = 0
+
+        dao.insertAll(
+            listOf(
+                DownloadEntity(
+                    id = "q-active", url = "https://youtube.com/watch?v=q1",
+                    platform = "YOUTUBE", mediaId = "q1", status = "DOWNLOADING", createdAt = 1L
+                ),
+                DownloadEntity(
+                    id = "q-queued", url = "https://youtube.com/watch?v=q2",
+                    platform = "YOUTUBE", mediaId = "q2", status = "QUEUED", createdAt = 2L
+                ),
+                DownloadEntity(
+                    id = "q-failed", url = "https://youtube.com/watch?v=q3",
+                    platform = "YOUTUBE", mediaId = "q3", status = "FAILED", retryCount = 2, createdAt = 3L
+                )
+            )
+        )
+
+        val pausedPartial = tempFiles.createTempDownloadFile("q-active")
+        pausedPartial.writeBytes(byteArrayOf(1, 2, 3, 4))
+        pausedPartial.setLastModified(0L)
+        val orphanFile = tempFiles.createTempDownloadFile("orphan-old")
+        orphanFile.writeBytes(byteArrayOf(9, 9))
+        orphanFile.setLastModified(0L)
+
+        // Pause single downloading task and verify startup recovery preserves its partial file
+        queue.pause("q-active")
+        assertEquals("PAUSED", dao.getById("q-active")?.status)
+
+        queue.performStartupRecovery()
+        org.junit.Assert.assertTrue(pausedPartial.exists())
+        org.junit.Assert.assertFalse(orphanFile.exists())
+
+        // Single resume returns PAUSED -> QUEUED
+        queue.resume("q-active")
+        assertEquals("QUEUED", dao.getById("q-active")?.status)
+
+        // Bulk pauseAll -> resumeAll -> retryAllFailed -> cancelAll
+        queue.pauseAll()
+        assertEquals("PAUSED", dao.getById("q-active")?.status)
+        assertEquals("PAUSED", dao.getById("q-queued")?.status)
+        assertEquals("FAILED", dao.getById("q-failed")?.status)
+
+        queue.resumeAll()
+        assertEquals("QUEUED", dao.getById("q-active")?.status)
+        assertEquals("QUEUED", dao.getById("q-queued")?.status)
+
+        queue.retryAllFailed()
+        val retried = dao.getById("q-failed")
+        assertEquals("QUEUED", retried?.status)
+        assertEquals(0, retried?.retryCount)
+
+        queue.cancelAll()
+        assertEquals("CANCELLED", dao.getById("q-active")?.status)
+        assertEquals("CANCELLED", dao.getById("q-queued")?.status)
+        assertEquals("CANCELLED", dao.getById("q-failed")?.status)
+        org.junit.Assert.assertFalse(pausedPartial.exists())
+
+        // Verify Wi-Fi Only blocks resume and resumeAll when offline/mobile
+        dao.insert(
+            DownloadEntity(
+                id = "wifi-paused", url = "https://youtube.com/watch?v=wp",
+                platform = "YOUTUBE", mediaId = "wp", status = "PAUSED"
+            )
+        )
+        val wifiSettingsFlow = kotlinx.coroutines.flow.MutableStateFlow(
+            com.mediasaver.core.model.AppSettings(wifiOnlyDownload = true)
+        )
+        val fakeSettingsRepo = object : com.mediasaver.core.domain.repository.SettingsRepository {
+            override val settings = wifiSettingsFlow
+            override suspend fun getSettings() = wifiSettingsFlow.value
+            override suspend fun updatePreferredQuality(quality: String) {}
+            override suspend fun updateDownloadDirectoryUri(uri: String?) {}
+            override suspend fun updateMaxConcurrentDownloads(limit: Int) {}
+            override suspend fun updateWifiOnlyDownload(wifiOnly: Boolean) {}
+            override suspend fun updateMaxDownloadSizeMb(maxSizeMb: Int) {}
+            override suspend fun updateWhatsAppStatusUri(uri: String?) {}
+            override suspend fun updateWhatsAppBusinessStatusUri(uri: String?) {}
+            override suspend fun updateSaveDownloadHistory(enabled: Boolean) {}
+            override suspend fun updateAutoDeleteTempFiles(enabled: Boolean) {}
+            override suspend fun updateThemeMode(themeMode: com.mediasaver.core.model.ThemeMode) {}
+            override suspend fun updateLanguageCode(languageCode: String) {}
+            override suspend fun resetToDefaults() {}
+        }
+        val wifiGuardedQueue = DownloadQueueManager(
+            context = context,
+            downloadDao = dao,
+            streamOptionDao = appDatabase.streamOptionDao(),
+            downloadWorker = worker,
+            tempFileManager = tempFiles,
+            retryPolicy = RetryPolicy(),
+            settingsRepository = fakeSettingsRepo,
+            isWifiConnectedProvider = { false }
+        )
+
+        val resumeBlocked = runCatching { wifiGuardedQueue.resume("wifi-paused") }
+        val resumeAllBlocked = runCatching { wifiGuardedQueue.resumeAll() }
+        org.junit.Assert.assertTrue(resumeBlocked.exceptionOrNull() is com.mediasaver.core.model.error.AppError.NetworkError)
+        org.junit.Assert.assertTrue(resumeAllBlocked.exceptionOrNull() is com.mediasaver.core.model.error.AppError.NetworkError)
+        assertEquals("PAUSED", dao.getById("wifi-paused")?.status)
+    }
+
+    @Test
+    fun `DownloadTask subfolder persists in Room description and round-trips through getAllDownloads`() = runTest {
+        val task = com.mediasaver.core.model.DownloadTask(
+            id = "subfolder-roundtrip",
+            url = "https://www.youtube.com/watch?v=subrt",
+            platform = com.mediasaver.core.model.PlatformId.YOUTUBE,
+            mediaId = "subrt",
+            title = "001 - Intro",
+            subfolder = "Lugha (Nah-wu)"
+        )
+        val stream = com.mediasaver.core.model.StreamInfo(
+            url = "https://cdn.example/video.mp4",
+            quality = "720p",
+            format = "mp4",
+            mimeType = "video/mp4"
+        )
+
+        testQueue.enqueue(task, stream)
+
+        assertEquals("folder:Lugha (Nah-wu)", appDatabase.downloadDao().getById("subfolder-roundtrip")?.description)
+        downloadRepository.getAllDownloads().test {
+            val emitted = awaitItem().firstOrNull { it.id == "subfolder-roundtrip" }
+            assertEquals("Lugha (Nah-wu)", emitted?.subfolder)
+            cancelAndIgnoreRemainingEvents()
+        }
     }
 }

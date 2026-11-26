@@ -167,6 +167,7 @@ class DuplicateDetectorTest {
         override suspend fun markCompleted(id: String, filePath: String, fileHash: String?, mimeType: String?, completedAt: Long, updatedAt: Long) {}
         override suspend fun markFailed(id: String, errorType: String?, errorMessage: String?, updatedAt: Long) {}
         override suspend fun markCancelled(id: String, updatedAt: Long) {}
+        override suspend fun markPaused(id: String, updatedAt: Long) {}
         override suspend fun deleteById(id: String) { items.removeAll { it.id == id } }
         override suspend fun delete(download: DownloadEntity) { items.remove(download) }
         override suspend fun clearHistory() {}
@@ -182,6 +183,8 @@ class DuplicateDetectorTest {
         }
         override suspend fun updateRetryCount(id: String, retryCount: Int, updatedAt: Long) {}
         override suspend fun findActiveDownloads(): List<DownloadEntity> = items.filter { it.status in listOf("QUEUED", "EXTRACTING", "DOWNLOADING", "MUXING") }
+        override suspend fun findPausedDownloads(): List<DownloadEntity> = items.filter { it.status == "PAUSED" }
+        override suspend fun findFailedDownloads(): List<DownloadEntity> = items.filter { it.status == "FAILED" }
         override fun observeActiveDownloads(): Flow<List<DownloadEntity>> = emptyFlow()
     }
 }

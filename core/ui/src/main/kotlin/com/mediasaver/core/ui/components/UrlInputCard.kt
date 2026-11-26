@@ -43,12 +43,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.mediasaver.core.model.PlatformId
+import com.mediasaver.core.ui.R as UiR
 import com.mediasaver.core.ui.theme.CardShape
 import com.mediasaver.core.ui.theme.MediaSaverTheme
 
@@ -96,7 +98,7 @@ fun UrlInputCard(
                     .onFocusChanged { isFocused = it.isFocused },
                 placeholder = {
                     Text(
-                        text = "Paste media link here...",
+                        text = stringResource(UiR.string.home_url_placeholder),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -104,7 +106,7 @@ fun UrlInputCard(
                 leadingIcon = {
                     Icon(
                         imageVector = Icons.Rounded.Link,
-                        contentDescription = "Link",
+                        contentDescription = stringResource(UiR.string.home_link),
                         tint = if (isFocused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 },
@@ -113,7 +115,7 @@ fun UrlInputCard(
                         IconButton(onClick = onClearClick) {
                             Icon(
                                 imageVector = Icons.Rounded.Close,
-                                contentDescription = "Clear",
+                                contentDescription = stringResource(UiR.string.home_clear),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -174,12 +176,12 @@ fun UrlInputCard(
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.ContentPaste,
-                            contentDescription = "Paste",
+                            contentDescription = stringResource(UiR.string.home_paste),
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Paste",
+                            text = stringResource(UiR.string.home_paste),
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.SemiBold
                         )
@@ -204,19 +206,19 @@ fun UrlInputCard(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "Fetching",
+                                text = stringResource(UiR.string.home_fetching),
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold
                             )
                         } else {
                             Icon(
                                 imageVector = Icons.Rounded.Search,
-                                contentDescription = "Fetch",
+                                contentDescription = stringResource(UiR.string.home_fetch),
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "Fetch",
+                                text = stringResource(UiR.string.home_fetch),
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold
                             )

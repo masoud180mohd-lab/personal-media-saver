@@ -69,6 +69,24 @@ class PlatformDetectorTest {
     }
 
     @Test
+    fun `detects Facebook watch URLs`() {
+        val url = "https://www.facebook.com/watch/?v=123456789"
+        assertEquals(PlatformId.FACEBOOK, PlatformDetector.detect(url))
+    }
+
+    @Test
+    fun `detects Facebook mobile reel URLs`() {
+        val url = "https://m.facebook.com/reel/123456789/"
+        assertEquals(PlatformId.FACEBOOK, PlatformDetector.detect(url))
+    }
+
+    @Test
+    fun `detects Facebook short fb watch URLs`() {
+        val url = "https://fb.watch/Ab_9-/"
+        assertEquals(PlatformId.FACEBOOK, PlatformDetector.detect(url))
+    }
+
+    @Test
     fun `detects WhatsApp local URI scheme`() {
         val url = "whatsapp://status/media_item"
         assertEquals(PlatformId.WHATSAPP, PlatformDetector.detect(url))
@@ -89,6 +107,7 @@ class PlatformDetectorTest {
         assertTrue(PlatformDetector.isSupported("https://www.youtube.com/watch?v=123"))
         assertTrue(PlatformDetector.isSupported("https://vm.tiktok.com/abc"))
         assertTrue(PlatformDetector.isSupported("https://instagram.com/p/xyz"))
-        assertFalse(PlatformDetector.isSupported("https://facebook.com/watch/123"))
+        assertTrue(PlatformDetector.isSupported("https://facebook.com/watch/?v=123"))
+        assertFalse(PlatformDetector.isSupported("https://vimeo.com/12345"))
     }
 }

@@ -28,6 +28,11 @@ object PlatformDetector {
         "instagr.am"
     )
 
+    private val FACEBOOK_HOSTS = setOf(
+        "facebook.com",
+        "fb.watch"
+    )
+
     /**
      * Identifies the platform from an input URL string.
      *
@@ -64,6 +69,10 @@ object PlatformDetector {
 
         if (INSTAGRAM_HOSTS.any { normalizedHost == it || normalizedHost.endsWith(".$it") }) {
             return PlatformId.INSTAGRAM
+        }
+
+        if (FACEBOOK_HOSTS.any { normalizedHost == it || normalizedHost.endsWith(".$it") }) {
+            return PlatformId.FACEBOOK
         }
 
         return PlatformId.UNKNOWN

@@ -71,6 +71,7 @@ object FileNameSanitizer {
             PlatformId.TIKTOK -> "TikTok"
             PlatformId.WHATSAPP -> "WhatsApp"
             PlatformId.INSTAGRAM -> "Instagram"
+            PlatformId.FACEBOOK -> "Facebook"
             PlatformId.UNKNOWN -> "Media"
         }
 

@@ -14,6 +14,7 @@ import androidx.compose.material.icons.automirrored.rounded.Chat
 import androidx.compose.material.icons.rounded.CameraAlt
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.OndemandVideo
 import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -29,6 +30,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.mediasaver.core.model.PlatformId
 import com.mediasaver.core.ui.theme.MediaSaverTheme
+import com.mediasaver.core.ui.theme.PlatformFacebook
 import com.mediasaver.core.ui.theme.PlatformInstagram
 import com.mediasaver.core.ui.theme.PlatformTikTok
 import com.mediasaver.core.ui.theme.PlatformTwitter
@@ -41,6 +43,7 @@ fun PlatformId.getBrandColor(): Color = when (this) {
     PlatformId.TIKTOK -> PlatformTikTok
     PlatformId.WHATSAPP -> PlatformWhatsApp
     PlatformId.INSTAGRAM -> PlatformInstagram
+    PlatformId.FACEBOOK -> PlatformFacebook
     PlatformId.UNKNOWN -> PlatformUnknown
 }
 
@@ -49,6 +52,7 @@ fun PlatformId.getIcon(): ImageVector = when (this) {
     PlatformId.TIKTOK -> Icons.Rounded.MusicNote
     PlatformId.WHATSAPP -> Icons.AutoMirrored.Rounded.Chat
     PlatformId.INSTAGRAM -> Icons.Rounded.CameraAlt
+    PlatformId.FACEBOOK -> Icons.Rounded.OndemandVideo
     PlatformId.UNKNOWN -> Icons.Rounded.Link
 }
 
@@ -57,6 +61,7 @@ fun PlatformId.getDisplayName(): String = when (this) {
     PlatformId.TIKTOK -> "TikTok"
     PlatformId.WHATSAPP -> "WhatsApp"
     PlatformId.INSTAGRAM -> "Instagram"
+    PlatformId.FACEBOOK -> "Facebook"
     PlatformId.UNKNOWN -> "Generic"
 }
 

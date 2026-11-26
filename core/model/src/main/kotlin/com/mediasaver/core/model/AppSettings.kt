@@ -13,5 +13,6 @@ data class AppSettings(
     val whatsappBusinessStatusUri: String? = null,
     val saveDownloadHistory: Boolean = true,
     val autoDeleteTempFiles: Boolean = true,
-    val themeMode: ThemeMode = ThemeMode.SYSTEM
+    val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    val languageCode: String = ""
 )

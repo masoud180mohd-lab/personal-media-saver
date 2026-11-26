@@ -38,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -46,6 +47,7 @@ import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import com.mediasaver.core.model.DownloadTask
 import com.mediasaver.core.model.PlatformId
+import com.mediasaver.core.ui.R as UiR
 import com.mediasaver.core.ui.theme.CardShape
 import com.mediasaver.core.ui.theme.MediaSaverTheme
 import com.mediasaver.core.ui.theme.ThumbShape
@@ -134,7 +136,7 @@ fun HistoryRow(
             // Title + meta line (platform • date • size)
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = task.title ?: "Downloaded Media",
+                    text = task.title ?: stringResource(UiR.string.history_downloaded_media),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -172,7 +174,7 @@ fun HistoryRow(
                 IconButton(onClick = { menuExpanded = true }) {
                     Icon(
                         imageVector = Icons.Rounded.MoreVert,
-                        contentDescription = "Options",
+                        contentDescription = stringResource(UiR.string.history_options),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -183,7 +185,7 @@ fun HistoryRow(
                     modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
                 ) {
                     DropdownMenuItem(
-                        text = { Text("Open") },
+                        text = { Text(stringResource(UiR.string.history_open)) },
                         leadingIcon = {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Rounded.OpenInNew,
@@ -197,7 +199,7 @@ fun HistoryRow(
                         }
                     )
                     DropdownMenuItem(
-                        text = { Text("Share") },
+                        text = { Text(stringResource(UiR.string.history_share)) },
                         leadingIcon = {
                             Icon(
                                 imageVector = Icons.Rounded.Share,
@@ -212,7 +214,7 @@ fun HistoryRow(
                     )
                     DropdownMenuItem(
                         text = {
-                            Text("Delete", color = MaterialTheme.colorScheme.error)
+                            Text(stringResource(UiR.string.history_delete), color = MaterialTheme.colorScheme.error)
                         },
                         leadingIcon = {
                             Icon(

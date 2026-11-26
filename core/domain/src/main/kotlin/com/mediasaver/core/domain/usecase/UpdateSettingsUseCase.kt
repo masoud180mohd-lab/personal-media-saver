@@ -30,6 +30,10 @@ class UpdateSettingsUseCase @Inject constructor(
         settingsRepository.updateDownloadDirectoryUri(uri)
     }
 
+    suspend fun updateLanguageCode(languageCode: String) {
+        settingsRepository.updateLanguageCode(languageCode)
+    }
+
     suspend fun resetToDefaults() {
         settingsRepository.resetToDefaults()
     }

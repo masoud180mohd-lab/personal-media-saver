@@ -14,6 +14,7 @@ import com.mediasaver.core.model.StreamInfo
 import com.mediasaver.core.storage.MediaStoreManager
 import com.mediasaver.core.storage.TempFileManager
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
@@ -479,5 +480,245 @@ class DownloadWorkerIntegrationTest {
         assertEquals(downloadsUri.toString(), webmPath)
         assertEquals("audio/webm", appDatabase.downloadDao().getById("yt-webm")?.mimeType)
         org.junit.Assert.assertArrayEquals(webmBytes, fallbackFile.readBytes())
+    }
+
+    @Test
+    fun `resumes partial temp file via HTTP 206 Range and saves combined payload`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val resolver = context.contentResolver
+        val videoCollection = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val videoUri = ContentUris.withAppendedId(videoCollection, 1L)
+        val videoSink = ByteArrayOutputStream()
+        shadowOf(resolver).registerOutputStream(videoUri, videoSink)
+
+        val fullBytes = byteArrayOf(0, 0, 0, 20) + "ftypmp42".toByteArray() + ByteArray(48) { (it + 1).toByte() }
+        val splitOffset = 20
+        val partialBytes = fullBytes.copyOfRange(0, splitOffset)
+        val remainingBytes = fullBytes.copyOfRange(splitOffset, fullBytes.size)
+
+        val tempFile = com.mediasaver.core.storage.TempFileManager(context).createTempDownloadFile("resume-206")
+        tempFile.writeBytes(partialBytes)
+
+        val observedRanges = mutableListOf<String?>()
+        val videoUrl = mockWebServer.url("/resumable.mp4").toString()
+        mockWebServer.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+            override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse {
+                observedRanges.add(request.getHeader("Range"))
+                return MockResponse()
+                    .setResponseCode(206)
+                    .setHeader("Content-Type", "video/mp4")
+                    .setHeader("Content-Range", "bytes $splitOffset-${fullBytes.size - 1}/${fullBytes.size}")
+                    .setBody(okio.Buffer().write(remainingBytes))
+            }
+        }
+
+        appDatabase.downloadDao().insert(
+            com.mediasaver.core.database.entity.DownloadEntity(
+                id = "resume-206",
+                url = videoUrl,
+                platform = "YOUTUBE",
+                mediaId = "resume206",
+                status = "QUEUED"
+            )
+        )
+
+        val savedPath = downloadWorker.executeDownload(
+            "resume-206",
+            "Resumed Video.mp4",
+            PlatformId.YOUTUBE,
+            StreamInfo(videoUrl, quality = "720p", format = "mp4", mimeType = "video/mp4")
+        ).getOrThrow()
+
+        assertEquals(listOf("bytes=$splitOffset-"), observedRanges)
+        assertEquals(videoUri.toString(), savedPath)
+        org.junit.Assert.assertArrayEquals(fullBytes, videoSink.toByteArray())
+    }
+
+    @Test
+    fun `falls back cleanly to full HTTP 200 overwrite when server ignores Range during resume`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val resolver = context.contentResolver
+        val videoCollection = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val videoUri = ContentUris.withAppendedId(videoCollection, 1L)
+        val videoSink = ByteArrayOutputStream()
+        shadowOf(resolver).registerOutputStream(videoUri, videoSink)
+
+        val fullBytes = byteArrayOf(0, 0, 0, 20) + "ftypmp42".toByteArray() + ByteArray(48) { (it + 2).toByte() }
+        val tempFile = com.mediasaver.core.storage.TempFileManager(context).createTempDownloadFile("resume-200")
+        tempFile.writeBytes(fullBytes.copyOfRange(0, 20))
+
+        val videoUrl = mockWebServer.url("/full-200.mp4").toString()
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "video/mp4")
+                .setBody(okio.Buffer().write(fullBytes))
+        )
+
+        appDatabase.downloadDao().insert(
+            com.mediasaver.core.database.entity.DownloadEntity(
+                id = "resume-200",
+                url = videoUrl,
+                platform = "YOUTUBE",
+                mediaId = "resume200",
+                status = "QUEUED"
+            )
+        )
+
+        val savedPath = downloadWorker.executeDownload(
+            "resume-200",
+            "Full Fallback.mp4",
+            PlatformId.YOUTUBE,
+            StreamInfo(videoUrl, quality = "720p", format = "mp4", mimeType = "video/mp4")
+        ).getOrThrow()
+
+        assertEquals(videoUri.toString(), savedPath)
+        org.junit.Assert.assertArrayEquals(fullBytes, videoSink.toByteArray())
+    }
+
+    @Test
+    fun `pause request cancels transfer while preserving partial temp file and setting PAUSED status`() = kotlinx.coroutines.runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val tempFile = com.mediasaver.core.storage.TempFileManager(context).createTempDownloadFile("pause-mid")
+        tempFile.delete()
+
+        val initialHeader = byteArrayOf(0, 0, 0, 20) + "ftypmp42".toByteArray() + ByteArray(12) { 7 }
+        val trailingPayload = ByteArray(16 * 1024) { 9 }
+        val videoUrl = mockWebServer.url("/slow.mp4").toString()
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "video/mp4")
+                .setBody(okio.Buffer().write(initialHeader).write(trailingPayload))
+                .throttleBody(64, 50, java.util.concurrent.TimeUnit.MILLISECONDS)
+        )
+
+        appDatabase.downloadDao().insert(
+            com.mediasaver.core.database.entity.DownloadEntity(
+                id = "pause-mid",
+                url = videoUrl,
+                platform = "YOUTUBE",
+                mediaId = "pausemid",
+                totalBytes = (initialHeader.size + trailingPayload.size).toLong(),
+                status = "QUEUED"
+            )
+        )
+
+        val transferJob = launch(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                downloadWorker.executeDownload(
+                    "pause-mid",
+                    "Pause Mid.mp4",
+                    PlatformId.YOUTUBE,
+                    StreamInfo(videoUrl, quality = "720p", format = "mp4", mimeType = "video/mp4")
+                )
+            }
+        }
+
+        kotlinx.coroutines.withTimeout(5000L) {
+            while (!tempFile.exists() || tempFile.length() < 12L) {
+                kotlinx.coroutines.delay(15L)
+            }
+        }
+
+        downloadWorker.markPauseRequested("pause-mid")
+        transferJob.cancel()
+        transferJob.join()
+
+        assertTrue(tempFile.exists())
+        assertTrue(tempFile.length() >= 12L)
+        val persisted = appDatabase.downloadDao().getById("pause-mid")
+        assertEquals("PAUSED", persisted?.status)
+        assertTrue((persisted?.downloadedBytes ?: 0L) >= 12L)
+    }
+
+    @Test
+    fun `executeDownload writes subfolder into MediaStore RELATIVE_PATH and sanitizes path traversal`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val audioCollection = MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val audioUri1 = ContentUris.withAppendedId(audioCollection, 101L)
+        val audioUri2 = ContentUris.withAppendedId(audioCollection, 102L)
+        val sinkFile1 = java.io.File.createTempFile("sub1", ".m4a", context.cacheDir)
+        val sinkFile2 = java.io.File.createTempFile("sub2", ".m4a", context.cacheDir)
+        val insertedRelativePaths = mutableListOf<String?>()
+        var insertSeq = 0
+
+        val provider = object : android.content.ContentProvider() {
+            override fun onCreate(): Boolean = true
+            override fun query(
+                uri: android.net.Uri,
+                projection: Array<out String>?,
+                selection: String?,
+                selectionArgs: Array<out String>?,
+                sortOrder: String?
+            ): android.database.Cursor? = null
+            override fun getType(uri: android.net.Uri): String? = null
+            override fun insert(uri: android.net.Uri, values: android.content.ContentValues?): android.net.Uri? {
+                insertedRelativePaths.add(values?.getAsString(MediaStore.MediaColumns.RELATIVE_PATH))
+                insertSeq++
+                return if (insertSeq == 1) audioUri1 else audioUri2
+            }
+            override fun delete(uri: android.net.Uri, selection: String?, selectionArgs: Array<out String>?): Int = 1
+            override fun update(
+                uri: android.net.Uri,
+                values: android.content.ContentValues?,
+                selection: String?,
+                selectionArgs: Array<out String>?
+            ): Int = 1
+            override fun openFile(uri: android.net.Uri, mode: String): android.os.ParcelFileDescriptor? {
+                val target = if (uri == audioUri1) sinkFile1 else sinkFile2
+                return android.os.ParcelFileDescriptor.open(
+                    target,
+                    android.os.ParcelFileDescriptor.MODE_CREATE or
+                        android.os.ParcelFileDescriptor.MODE_TRUNCATE or
+                        android.os.ParcelFileDescriptor.MODE_READ_WRITE
+                )
+            }
+        }
+        provider.attachInfo(
+            context,
+            android.content.pm.ProviderInfo().apply {
+                authority = MediaStore.AUTHORITY
+                exported = true
+            }
+        )
+        org.robolectric.shadows.ShadowContentResolver.registerProviderInternal(MediaStore.AUTHORITY, provider)
+
+        val m4aBytes1 = byteArrayOf(0, 0, 0, 20) + "ftypM4A lesson1!".toByteArray()
+        val m4aBytes2 = byteArrayOf(0, 0, 0, 20) + "ftypM4A lesson2!".toByteArray()
+        val url1 = mockWebServer.url("/sub1.m4a").toString()
+        val url2 = mockWebServer.url("/sub2.m4a").toString()
+        mockWebServer.enqueue(MockResponse().setHeader("Content-Type", "audio/mp4").setBody(okio.Buffer().write(m4aBytes1)))
+        mockWebServer.enqueue(MockResponse().setHeader("Content-Type", "audio/mp4").setBody(okio.Buffer().write(m4aBytes2)))
+
+        appDatabase.downloadDao().insertAll(
+            listOf(
+                com.mediasaver.core.database.entity.DownloadEntity(
+                    id = "sub-dl-1", url = url1, platform = "YOUTUBE", mediaId = "sub1#audio", status = "QUEUED"
+                ),
+                com.mediasaver.core.database.entity.DownloadEntity(
+                    id = "sub-dl-2", url = url2, platform = "YOUTUBE", mediaId = "sub2#audio", status = "QUEUED"
+                )
+            )
+        )
+
+        downloadWorker.executeDownload(
+            "sub-dl-1", "001 - Darsa.m4a", PlatformId.YOUTUBE,
+            StreamInfo(url1, quality = "128 kbps", format = "m4a", mimeType = "audio/mp4", isAudioOnly = true),
+            subfolder = "Lugha (Nah-wu)"
+        ).getOrThrow()
+
+        downloadWorker.executeDownload(
+            "sub-dl-2", "002 - Darsa.m4a", PlatformId.YOUTUBE,
+            StreamInfo(url2, quality = "128 kbps", format = "m4a", mimeType = "audio/mp4", isAudioOnly = true),
+            subfolder = "../secret/folder"
+        ).getOrThrow()
+
+        assertEquals(2, insertedRelativePaths.size)
+        assertEquals("Music/MediaSaver/YouTube/Lugha (Nah-wu)", insertedRelativePaths[0])
+        val sanitizedPath = requireNotNull(insertedRelativePaths[1])
+        assertTrue(sanitizedPath.startsWith("Music/MediaSaver/YouTube/"))
+        org.junit.Assert.assertFalse(sanitizedPath.contains(".."))
+        assertEquals(4, sanitizedPath.split('/').size)
     }
 }

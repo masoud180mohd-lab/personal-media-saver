@@ -44,6 +44,7 @@ include(":platform:youtube")
 include(":platform:tiktok")
 include(":platform:whatsapp")
 include(":platform:instagram")
+include(":platform:facebook")
 
 // Feature modules
 include(":feature:home")

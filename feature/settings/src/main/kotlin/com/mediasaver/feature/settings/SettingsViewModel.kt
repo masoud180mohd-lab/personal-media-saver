@@ -76,6 +76,16 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun updateLanguageCode(languageCode: String) {
+        viewModelScope.launch {
+            try {
+                updateSettingsUseCase.updateLanguageCode(languageCode)
+            } catch (e: Exception) {
+                _userMessage.value = "Failed to update language: ${e.localizedMessage}"
+            }
+        }
+    }
+
     fun resetToDefaults() {
         viewModelScope.launch {
             try {

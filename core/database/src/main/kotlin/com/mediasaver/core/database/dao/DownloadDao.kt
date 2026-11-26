@@ -98,6 +98,9 @@ interface DownloadDao {
     @Query("UPDATE downloads SET status = 'CANCELLED', updatedAt = :updatedAt WHERE id = :id")
     suspend fun markCancelled(id: String, updatedAt: Long = System.currentTimeMillis())
 
+    @Query("UPDATE downloads SET status = 'PAUSED', updatedAt = :updatedAt WHERE id = :id")
+    suspend fun markPaused(id: String, updatedAt: Long = System.currentTimeMillis())
+
     @Transaction
     suspend fun completeWithProgress(
         id: String,
@@ -122,10 +125,10 @@ interface DownloadDao {
     @Query("DELETE FROM downloads")
     suspend fun deleteAll()
 
-    @Query("SELECT * FROM downloads WHERE url = :url AND platform = :platform AND status IN ('QUEUED', 'EXTRACTING', 'DOWNLOADING', 'MUXING', 'COMPLETED') ORDER BY createdAt DESC LIMIT 1")
+    @Query("SELECT * FROM downloads WHERE url = :url AND platform = :platform AND status IN ('QUEUED', 'EXTRACTING', 'DOWNLOADING', 'MUXING', 'PAUSED', 'COMPLETED') ORDER BY createdAt DESC LIMIT 1")
     suspend fun findByUrlAndPlatform(url: String, platform: String): DownloadEntity?
 
-    @Query("SELECT * FROM downloads WHERE mediaId = :mediaId AND platform = :platform AND status IN ('QUEUED', 'EXTRACTING', 'DOWNLOADING', 'MUXING', 'COMPLETED') ORDER BY createdAt DESC LIMIT 1")
+    @Query("SELECT * FROM downloads WHERE mediaId = :mediaId AND platform = :platform AND status IN ('QUEUED', 'EXTRACTING', 'DOWNLOADING', 'MUXING', 'PAUSED', 'COMPLETED') ORDER BY createdAt DESC LIMIT 1")
     suspend fun findByMediaIdAndPlatform(mediaId: String, platform: String): DownloadEntity?
 
     @Query("SELECT * FROM downloads WHERE fileHash = :fileHash AND status = 'COMPLETED' LIMIT 1")
@@ -136,6 +139,12 @@ interface DownloadDao {
 
     @Query("SELECT * FROM downloads WHERE status IN ('QUEUED', 'EXTRACTING', 'DOWNLOADING', 'MUXING') ORDER BY createdAt ASC")
     suspend fun findActiveDownloads(): List<DownloadEntity>
+
+    @Query("SELECT * FROM downloads WHERE status = 'PAUSED' ORDER BY createdAt ASC")
+    suspend fun findPausedDownloads(): List<DownloadEntity>
+
+    @Query("SELECT * FROM downloads WHERE status = 'FAILED' ORDER BY createdAt ASC")
+    suspend fun findFailedDownloads(): List<DownloadEntity>
 
     @Query("SELECT * FROM downloads WHERE status IN ('QUEUED', 'EXTRACTING', 'DOWNLOADING', 'MUXING') ORDER BY createdAt ASC")
     fun observeActiveDownloads(): Flow<List<DownloadEntity>>

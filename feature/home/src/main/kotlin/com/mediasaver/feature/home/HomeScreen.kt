@@ -28,7 +28,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.FormatListNumbered
 import androidx.compose.material.icons.rounded.Search
+import com.mediasaver.core.common.FileNameSanitizer
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -65,6 +68,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -72,6 +76,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.mediasaver.core.model.MediaInfo
 import com.mediasaver.core.model.PlatformId
 import com.mediasaver.core.model.StreamInfo
+import com.mediasaver.core.ui.R as UiR
 import com.mediasaver.core.ui.components.AppSnackbar
 import com.mediasaver.core.ui.components.ErrorState
 import com.mediasaver.core.ui.components.MediaPreviewCard
@@ -143,6 +148,12 @@ fun HomeScreen(
         onSelectPlaylistQuality = { quality ->
             viewModel.onSelectPlaylistQuality(quality)
         },
+        onToggleOrganizeInPlaylistFolder = { enabled ->
+            viewModel.onToggleOrganizeInPlaylistFolder(enabled)
+        },
+        onToggleNumberPlaylistEpisodes = { enabled ->
+            viewModel.onToggleNumberPlaylistEpisodes(enabled)
+        },
         onStartPlaylistBatchDownload = {
             viewModel.startPlaylistBatchDownload()
         }
@@ -163,6 +174,8 @@ fun HomeScreenContent(
     onTogglePlaylistVideo: (String) -> Unit = {},
     onSelectAllPlaylistVideos: (Boolean) -> Unit = {},
     onSelectPlaylistQuality: (String) -> Unit = {},
+    onToggleOrganizeInPlaylistFolder: (Boolean) -> Unit = {},
+    onToggleNumberPlaylistEpisodes: (Boolean) -> Unit = {},
     onStartPlaylistBatchDownload: () -> Unit = {}
 ) {
     val isReduceMotion = rememberIsReduceMotionEnabled()
@@ -188,13 +201,13 @@ fun HomeScreenContent(
             // Screen Title & Subtitle: "Clean Utility"
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    text = "Save Media",
+                    text = stringResource(UiR.string.home_title),
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = "Download videos and audio with no ads or tracking",
+                    text = stringResource(UiR.string.home_subtitle),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -269,7 +282,7 @@ fun HomeScreenContent(
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = "Queuing ${uiState.playlistEnqueueProgress ?: "..."}...",
+                                        text = stringResource(UiR.string.playlist_queuing, uiState.playlistEnqueueProgress ?: "..."),
                                         style = MaterialTheme.typography.titleMedium
                                     )
                                 } else {
@@ -280,21 +293,35 @@ fun HomeScreenContent(
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = "Download Selected (${uiState.selectedPlaylistVideoIds.size})",
+                                        text = stringResource(UiR.string.playlist_download_selected, uiState.selectedPlaylistVideoIds.size),
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.Bold
                                     )
                                 }
                             }
 
+                            val playlistPlatformFolder = when (media.platform) {
+                                PlatformId.YOUTUBE -> "YouTube"
+                                PlatformId.TIKTOK -> "TikTok"
+                                PlatformId.WHATSAPP -> "WhatsApp"
+                                PlatformId.INSTAGRAM -> "Instagram"
+                                PlatformId.FACEBOOK -> "Facebook"
+                                PlatformId.UNKNOWN -> "Downloads"
+                            }
                             PlaylistSelectionCard(
                                 playlistItems = media.playlistItems,
                                 totalPlaylistCount = media.totalPlaylistCount,
+                                playlistTitle = media.title,
+                                platformFolderName = playlistPlatformFolder,
                                 selectedVideoIds = uiState.selectedPlaylistVideoIds,
                                 selectedQuality = uiState.playlistQuality,
+                                organizeInPlaylistFolder = uiState.organizeInPlaylistFolder,
+                                numberPlaylistEpisodes = uiState.numberPlaylistEpisodes,
                                 onToggleVideo = onTogglePlaylistVideo,
                                 onSelectAll = onSelectAllPlaylistVideos,
-                                onSelectQuality = onSelectPlaylistQuality
+                                onSelectQuality = onSelectPlaylistQuality,
+                                onToggleOrganizeInPlaylistFolder = onToggleOrganizeInPlaylistFolder,
+                                onToggleNumberPlaylistEpisodes = onToggleNumberPlaylistEpisodes
                             )
                         } else {
                             if (uiState.availableStreams.isNotEmpty() && !isCarousel) {
@@ -335,7 +362,7 @@ fun HomeScreenContent(
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Text(
-                                            text = "Save Slide",
+                                            text = stringResource(UiR.string.home_save_slide),
                                             style = MaterialTheme.typography.titleMedium,
                                             fontWeight = FontWeight.Bold
                                         )
@@ -366,7 +393,7 @@ fun HomeScreenContent(
                                             )
                                         } else {
                                             Text(
-                                                text = "Save All",
+                                                text = stringResource(UiR.string.home_save_all),
                                                 style = MaterialTheme.typography.titleMedium,
                                                 fontWeight = FontWeight.Bold
                                             )
@@ -400,7 +427,7 @@ fun HomeScreenContent(
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Text(
-                                            text = "Queuing Download...",
+                                            text = stringResource(UiR.string.home_queuing_download),
                                             style = MaterialTheme.typography.titleMedium
                                         )
                                     } else {
@@ -411,7 +438,7 @@ fun HomeScreenContent(
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Text(
-                                            text = "Download",
+                                            text = stringResource(UiR.string.home_download),
                                             style = MaterialTheme.typography.titleMedium,
                                             fontWeight = FontWeight.Bold
                                         )
@@ -441,15 +468,27 @@ private const val PLAYLIST_PAGE_SIZE = 50
 private fun PlaylistSelectionCard(
     playlistItems: List<PlaylistItem>,
     totalPlaylistCount: Int?,
+    playlistTitle: String?,
+    platformFolderName: String,
     selectedVideoIds: Set<String>,
     selectedQuality: String,
+    organizeInPlaylistFolder: Boolean,
+    numberPlaylistEpisodes: Boolean,
     onToggleVideo: (String) -> Unit,
     onSelectAll: (Boolean) -> Unit,
     onSelectQuality: (String) -> Unit,
+    onToggleOrganizeInPlaylistFolder: (Boolean) -> Unit,
+    onToggleNumberPlaylistEpisodes: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val allSelected = playlistItems.isNotEmpty() && selectedVideoIds.size == playlistItems.size
     val qualityOptions = listOf("1080p", "720p", "480p", "360p", "Audio")
+    val folderPreview = remember(playlistTitle) {
+        FileNameSanitizer.sanitize(playlistTitle, fallback = "")
+            .take(60)
+            .trimEnd('.', '_', '-', ' ')
+            .ifBlank { null }
+    }
     var filterQuery by remember(playlistItems) { mutableStateOf("") }
     var visibleCount by remember(playlistItems, filterQuery) { mutableIntStateOf(PLAYLIST_PAGE_SIZE) }
 
@@ -493,7 +532,7 @@ private fun PlaylistSelectionCard(
                     tint = MaterialTheme.colorScheme.primary
                 )
                 Text(
-                    text = "Batch Quality",
+                    text = stringResource(UiR.string.playlist_batch_quality),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface
@@ -508,10 +547,15 @@ private fun PlaylistSelectionCard(
             ) {
                 qualityOptions.forEach { quality ->
                     val isSelected = selectedQuality.equals(quality, ignoreCase = true)
+                    val displayQuality = if (quality.equals("Audio", ignoreCase = true)) {
+                        stringResource(UiR.string.playlist_audio)
+                    } else {
+                        quality
+                    }
                     FilterChip(
                         selected = isSelected,
                         onClick = { onSelectQuality(quality) },
-                        label = { Text(quality, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
+                        label = { Text(displayQuality, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
                         shape = ChipShape,
                         colors = FilterChipDefaults.filterChipColors(
                             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -520,6 +564,60 @@ private fun PlaylistSelectionCard(
                         )
                     )
                 }
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FilterChip(
+                    selected = organizeInPlaylistFolder,
+                    onClick = { onToggleOrganizeInPlaylistFolder(!organizeInPlaylistFolder) },
+                    label = { Text(stringResource(UiR.string.playlist_folder)) },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Rounded.Folder,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    },
+                    shape = ChipShape,
+                    colors = FilterChipDefaults.filterChipColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                        selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                )
+                FilterChip(
+                    selected = numberPlaylistEpisodes,
+                    onClick = { onToggleNumberPlaylistEpisodes(!numberPlaylistEpisodes) },
+                    label = { Text(stringResource(UiR.string.playlist_number_episodes)) },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Rounded.FormatListNumbered,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    },
+                    shape = ChipShape,
+                    colors = FilterChipDefaults.filterChipColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                        selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                )
+            }
+
+            if (organizeInPlaylistFolder && folderPreview != null) {
+                Text(
+                    text = stringResource(UiR.string.playlist_save_path, platformFolderName, folderPreview),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -531,21 +629,21 @@ private fun PlaylistSelectionCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "${selectedVideoIds.size} of ${playlistItems.size} selected",
+                        text = stringResource(UiR.string.playlist_selected_count, selectedVideoIds.size, playlistItems.size),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     if (totalPlaylistCount != null && totalPlaylistCount > playlistItems.size) {
                         Text(
-                            text = "Showing ${playlistItems.size} of $totalPlaylistCount videos",
+                            text = stringResource(UiR.string.playlist_showing_count, playlistItems.size, totalPlaylistCount),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
                 TextButton(onClick = { onSelectAll(!allSelected) }) {
-                    Text(if (allSelected) "Clear All" else "Select All")
+                    Text(stringResource(if (allSelected) UiR.string.playlist_clear_all else UiR.string.playlist_select_all))
                 }
             }
 
@@ -554,7 +652,7 @@ private fun PlaylistSelectionCard(
                     value = filterQuery,
                     onValueChange = { filterQuery = it },
                     singleLine = true,
-                    placeholder = { Text("Filter videos by title or number...") },
+                    placeholder = { Text(stringResource(UiR.string.playlist_filter_hint)) },
                     leadingIcon = {
                         Icon(
                             imageVector = Icons.Rounded.Search,
@@ -566,7 +664,7 @@ private fun PlaylistSelectionCard(
                             IconButton(onClick = { filterQuery = "" }) {
                                 Icon(
                                     imageVector = Icons.Rounded.Close,
-                                    contentDescription = "Clear filter"
+                                    contentDescription = stringResource(UiR.string.playlist_clear_filter)
                                 )
                             }
                         }
@@ -577,7 +675,7 @@ private fun PlaylistSelectionCard(
 
             if (filteredItems.isEmpty() && filterQuery.isNotBlank()) {
                 Text(
-                    text = "No videos match \"$filterQuery\"",
+                    text = stringResource(UiR.string.playlist_no_matches, filterQuery),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(vertical = 8.dp)
@@ -629,7 +727,7 @@ private fun PlaylistSelectionCard(
             if (filteredItems.size > visibleCount) {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Text(
-                    text = "Showing ${visibleItems.size} of ${filteredItems.size} videos",
+                    text = stringResource(UiR.string.playlist_showing_count, visibleItems.size, filteredItems.size),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -640,10 +738,10 @@ private fun PlaylistSelectionCard(
                     val remaining = filteredItems.size - visibleCount
                     val nextBatch = minOf(PLAYLIST_PAGE_SIZE, remaining)
                     TextButton(onClick = { visibleCount += PLAYLIST_PAGE_SIZE }) {
-                        Text("Show $nextBatch More")
+                        Text(stringResource(UiR.string.playlist_show_more, nextBatch))
                     }
                     TextButton(onClick = { visibleCount = filteredItems.size }) {
-                        Text("Show All (${filteredItems.size})")
+                        Text(stringResource(UiR.string.playlist_show_all, filteredItems.size))
                     }
                 }
             }

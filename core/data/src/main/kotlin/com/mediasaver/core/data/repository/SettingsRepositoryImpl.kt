@@ -38,6 +38,7 @@ class SettingsRepositoryImpl @Inject constructor(
         val SAVE_DOWNLOAD_HISTORY = booleanPreferencesKey("save_download_history")
         val AUTO_DELETE_TEMP_FILES = booleanPreferencesKey("auto_delete_temp_files")
         val THEME_MODE = stringPreferencesKey("theme_mode")
+        val LANGUAGE_CODE = stringPreferencesKey("language_code")
     }
 
     override val settings: Flow<AppSettings> = dataStore.data
@@ -61,7 +62,8 @@ class SettingsRepositoryImpl @Inject constructor(
                 autoDeleteTempFiles = preferences[PreferencesKeys.AUTO_DELETE_TEMP_FILES] ?: true,
                 themeMode = preferences[PreferencesKeys.THEME_MODE]?.let {
                     runCatching { ThemeMode.valueOf(it) }.getOrDefault(ThemeMode.SYSTEM)
-                } ?: ThemeMode.SYSTEM
+                } ?: ThemeMode.SYSTEM,
+                languageCode = preferences[PreferencesKeys.LANGUAGE_CODE] ?: ""
             )
         }
 
@@ -136,6 +138,12 @@ class SettingsRepositoryImpl @Inject constructor(
     override suspend fun updateThemeMode(themeMode: ThemeMode) {
         dataStore.edit { preferences ->
             preferences[PreferencesKeys.THEME_MODE] = themeMode.name
+        }
+    }
+
+    override suspend fun updateLanguageCode(languageCode: String) {
+        dataStore.edit { preferences ->
+            preferences[PreferencesKeys.LANGUAGE_CODE] = languageCode.trim().lowercase()
         }
     }
 

@@ -16,6 +16,9 @@ enum class DownloadStatus {
     /** Combining video and audio tracks via FFmpeg (for adaptive 1080p+ streams). */
     MUXING,
 
+    /** Paused by user; partial bytes preserved for HTTP Range resume. */
+    PAUSED,
+
     /** Successfully saved to destination (MediaStore / local gallery). */
     COMPLETED,
 
@@ -30,4 +33,7 @@ enum class DownloadStatus {
 
     val isActive: Boolean
         get() = this == EXTRACTING || this == DOWNLOADING || this == MUXING
+
+    val isPausable: Boolean
+        get() = this == QUEUED || this == EXTRACTING || this == DOWNLOADING
 }

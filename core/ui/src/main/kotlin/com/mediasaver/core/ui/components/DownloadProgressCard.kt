@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -35,6 +37,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -45,6 +48,7 @@ import com.mediasaver.core.model.DownloadProgressInfo
 import com.mediasaver.core.model.DownloadStatus
 import com.mediasaver.core.model.DownloadTask
 import com.mediasaver.core.model.PlatformId
+import com.mediasaver.core.ui.R as UiR
 import com.mediasaver.core.ui.theme.CardShape
 import com.mediasaver.core.ui.theme.ChipShape
 import com.mediasaver.core.ui.theme.MediaSaverTheme
@@ -60,9 +64,12 @@ fun DownloadProgressCard(
     onCancel: () -> Unit,
     onRetry: () -> Unit,
     onRemove: () -> Unit = {},
+    onPause: () -> Unit = {},
+    onResume: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val isFailed = task.status == DownloadStatus.FAILED || task.status == DownloadStatus.CANCELLED
+    val isPaused = task.status == DownloadStatus.PAUSED
     val isReduceMotion = rememberIsReduceMotionEnabled()
 
     val containerColor = if (isFailed) {
@@ -77,12 +84,13 @@ fun DownloadProgressCard(
         MaterialTheme.colorScheme.outlineVariant
     }
 
-    // Calculate progress fraction
-    val liveTotal = liveProgress?.totalBytes
+    // Calculate progress fraction (use persisted DB bytes while paused instead of stale flow state)
+    val effectiveLiveProgress = if (isPaused) null else liveProgress
+    val liveTotal = effectiveLiveProgress?.totalBytes
     val taskTotal = task.totalBytes
     val rawProgressFraction = when {
-        liveProgress != null && liveTotal != null && liveTotal > 0 -> {
-            (liveProgress.bytesDownloaded.toFloat() / liveTotal.toFloat()).coerceIn(0f, 1f)
+        effectiveLiveProgress != null && liveTotal != null && liveTotal > 0 -> {
+            (effectiveLiveProgress.bytesDownloaded.toFloat() / liveTotal.toFloat()).coerceIn(0f, 1f)
         }
         taskTotal != null && taskTotal > 0 -> {
             (task.downloadedBytes.toFloat() / taskTotal.toFloat()).coerceIn(0f, 1f)
@@ -154,7 +162,7 @@ fun DownloadProgressCard(
                 // Title + Status Chip
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = task.title ?: "Processing download...",
+                        text = task.title ?: stringResource(UiR.string.downloads_processing),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface,
@@ -165,7 +173,11 @@ fun DownloadProgressCard(
                     StatusPillChip(status = task.status)
                 }
 
-                // Trailing Action Button: Cancel (close icon) or Retry + Remove when failed/cancelled
+                // Trailing Action Buttons:
+                // Failed/Cancelled -> Retry + Remove
+                // Paused -> Resume + Cancel
+                // Pausable (Queued/Extracting/Downloading) -> Pause + Cancel
+                // Muxing -> Cancel
                 if (isFailed) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         IconButton(
@@ -177,7 +189,7 @@ fun DownloadProgressCard(
                         ) {
                             Icon(
                                 imageVector = Icons.Rounded.Refresh,
-                                contentDescription = "Retry",
+                                contentDescription = stringResource(UiR.string.downloads_retry),
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(20.dp)
                             )
@@ -191,7 +203,38 @@ fun DownloadProgressCard(
                         ) {
                             Icon(
                                 imageVector = Icons.Rounded.Close,
-                                contentDescription = "Remove",
+                                contentDescription = stringResource(UiR.string.downloads_remove),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                } else if (isPaused || task.status.isPausable) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        IconButton(
+                            onClick = if (isPaused) onResume else onPause,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        ) {
+                            Icon(
+                                imageVector = if (isPaused) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
+                                contentDescription = stringResource(if (isPaused) UiR.string.downloads_resume else UiR.string.downloads_pause),
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        IconButton(
+                            onClick = onCancel,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Close,
+                                contentDescription = stringResource(UiR.string.downloads_cancel),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(20.dp)
                             )
@@ -207,7 +250,7 @@ fun DownloadProgressCard(
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Close,
-                            contentDescription = "Cancel",
+                            contentDescription = stringResource(UiR.string.downloads_cancel),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(20.dp)
                         )
@@ -225,8 +268,13 @@ fun DownloadProgressCard(
                 )
             }
 
-            // Middle: linear progress (primary, rounded, animated)
-            if (task.status.isActive) {
+            // Middle: linear progress (primary when active, secondary when paused)
+            if (task.status.isActive || isPaused) {
+                val indicatorColor = if (isPaused) {
+                    MaterialTheme.colorScheme.secondary
+                } else {
+                    MaterialTheme.colorScheme.primary
+                }
                 if (rawProgressFraction != null) {
                     LinearProgressIndicator(
                         progress = { animatedProgress },
@@ -234,17 +282,17 @@ fun DownloadProgressCard(
                             .fillMaxWidth()
                             .height(6.dp)
                             .clip(CircleShape),
-                        color = MaterialTheme.colorScheme.primary,
+                        color = indicatorColor,
                         trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
                         strokeCap = StrokeCap.Round
                     )
-                } else {
+                } else if (!isPaused) {
                     LinearProgressIndicator(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(6.dp)
                             .clip(CircleShape),
-                        color = MaterialTheme.colorScheme.primary,
+                        color = indicatorColor,
                         trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
                         strokeCap = StrokeCap.Round
                     )
@@ -256,22 +304,26 @@ fun DownloadProgressCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    val percent = liveProgress?.progressPercent ?: ((rawProgressFraction ?: 0f) * 100).toInt()
-                    MetaChip(text = "$percent%")
-
-                    if (liveProgress != null && liveProgress.speedBytesPerSec > 0) {
-                        MetaChip(text = formatSpeed(liveProgress.speedBytesPerSec))
+                    if (rawProgressFraction != null || !isPaused) {
+                        val percent = effectiveLiveProgress?.progressPercent ?: ((rawProgressFraction ?: 0f) * 100).toInt()
+                        MetaChip(text = "$percent%")
                     }
 
-                    val eta = liveProgress?.etaSeconds
+                    if (!isPaused && effectiveLiveProgress != null && effectiveLiveProgress.speedBytesPerSec > 0) {
+                        MetaChip(text = formatSpeed(effectiveLiveProgress.speedBytesPerSec))
+                    }
+
+                    val eta = if (isPaused) null else effectiveLiveProgress?.etaSeconds
                     if (eta != null && eta > 0) {
-                        MetaChip(text = "ETA ${formatEta(eta)}")
+                        MetaChip(text = stringResource(UiR.string.downloads_eta, formatEta(eta)))
                     }
 
                     val totalBytes = liveTotal ?: taskTotal
+                    val downloaded = effectiveLiveProgress?.bytesDownloaded ?: task.downloadedBytes
                     if (totalBytes != null && totalBytes > 0) {
-                        val downloaded = liveProgress?.bytesDownloaded ?: task.downloadedBytes
                         MetaChip(text = "${formatFileSize(downloaded)} / ${formatFileSize(totalBytes)}")
+                    } else if (isPaused && downloaded > 0) {
+                        MetaChip(text = stringResource(UiR.string.downloads_saved_amount, formatFileSize(downloaded)))
                     }
                 }
             }
@@ -281,14 +333,15 @@ fun DownloadProgressCard(
 
 @Composable
 private fun StatusPillChip(status: DownloadStatus) {
-    val (label, containerColor, contentColor) = when (status) {
-        DownloadStatus.QUEUED -> Triple("Queued", MaterialTheme.colorScheme.surfaceContainerHigh, MaterialTheme.colorScheme.onSurfaceVariant)
-        DownloadStatus.EXTRACTING -> Triple("Resolving", MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer)
-        DownloadStatus.DOWNLOADING -> Triple("Downloading", MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer)
-        DownloadStatus.MUXING -> Triple("Muxing Tracks", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
-        DownloadStatus.COMPLETED -> Triple("Finished", MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.primary)
-        DownloadStatus.FAILED -> Triple("Failed", MaterialTheme.colorScheme.errorContainer, MaterialTheme.colorScheme.error)
-        DownloadStatus.CANCELLED -> Triple("Cancelled", MaterialTheme.colorScheme.surfaceContainerHighest, MaterialTheme.colorScheme.onSurfaceVariant)
+    val (labelRes, containerColor, contentColor) = when (status) {
+        DownloadStatus.QUEUED -> Triple(UiR.string.downloads_state_queued, MaterialTheme.colorScheme.surfaceContainerHigh, MaterialTheme.colorScheme.onSurfaceVariant)
+        DownloadStatus.EXTRACTING -> Triple(UiR.string.downloads_state_resolving, MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer)
+        DownloadStatus.DOWNLOADING -> Triple(UiR.string.downloads_state_downloading, MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer)
+        DownloadStatus.MUXING -> Triple(UiR.string.downloads_state_muxing, MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
+        DownloadStatus.PAUSED -> Triple(UiR.string.downloads_state_paused, MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer)
+        DownloadStatus.COMPLETED -> Triple(UiR.string.downloads_state_finished, MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.primary)
+        DownloadStatus.FAILED -> Triple(UiR.string.downloads_state_failed, MaterialTheme.colorScheme.errorContainer, MaterialTheme.colorScheme.error)
+        DownloadStatus.CANCELLED -> Triple(UiR.string.downloads_state_cancelled, MaterialTheme.colorScheme.surfaceContainerHighest, MaterialTheme.colorScheme.onSurfaceVariant)
     }
 
     Surface(
@@ -296,7 +349,7 @@ private fun StatusPillChip(status: DownloadStatus) {
         color = containerColor
     ) {
         Text(
-            text = label,
+            text = stringResource(labelRes),
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.SemiBold,

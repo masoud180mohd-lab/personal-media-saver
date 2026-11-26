@@ -64,12 +64,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.mediasaver.core.model.StatusMediaType
 import com.mediasaver.core.model.WhatsAppStatus
+import com.mediasaver.core.ui.R as UiR
 import com.mediasaver.core.ui.components.AppSnackbar
 import com.mediasaver.core.ui.components.EmptyState
 import com.mediasaver.core.ui.components.StatusCard
@@ -183,13 +185,13 @@ fun StatusBrowserScreenContent(
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        text = "Statuses",
+                        text = stringResource(UiR.string.status_title),
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = "View and save WhatsApp status updates",
+                        text = stringResource(UiR.string.status_subtitle),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -206,7 +208,7 @@ fun StatusBrowserScreenContent(
                         } else {
                             Icon(
                                 imageVector = Icons.Rounded.Refresh,
-                                contentDescription = "Refresh",
+                                contentDescription = stringResource(UiR.string.status_refresh),
                                 tint = MaterialTheme.colorScheme.primary
                             )
                         }
@@ -252,7 +254,7 @@ fun StatusBrowserScreenContent(
                         }
 
                         Text(
-                            text = "Storage Permission Required",
+                            text = stringResource(UiR.string.status_permission_title),
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
@@ -264,17 +266,17 @@ fun StatusBrowserScreenContent(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
-                                text = "• WhatsApp caches temporary status stories in your local storage folder.",
+                                text = stringResource(UiR.string.status_permission_line1),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Text(
-                                text = "• Grant folder access so Personal Media Saver can discover and save them.",
+                                text = stringResource(UiR.string.status_permission_line2),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Text(
-                                text = "• Zero analytics or cloud uploads. All operations run 100% on your device.",
+                                text = stringResource(UiR.string.status_permission_line3),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -300,7 +302,7 @@ fun StatusBrowserScreenContent(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Grant Folder Access",
+                                text = stringResource(UiR.string.status_grant_folder_access),
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold
                             )
@@ -322,7 +324,11 @@ fun StatusBrowserScreenContent(
                         color = MaterialTheme.colorScheme.surfaceContainerHigh
                     ) {
                         Text(
-                            text = if (selectionCount > 0) "$selectionCount selected" else "${displayedStatuses.size} statuses",
+                            text = if (selectionCount > 0) {
+                                stringResource(UiR.string.status_selected_count, selectionCount)
+                            } else {
+                                stringResource(UiR.string.status_total_count, displayedStatuses.size)
+                            },
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.SemiBold,
                             color = if (selectionCount > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -355,7 +361,7 @@ fun StatusBrowserScreenContent(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "Save ($selectionCount)",
+                                text = stringResource(UiR.string.status_save_count, selectionCount),
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold
                             )
@@ -378,7 +384,7 @@ fun StatusBrowserScreenContent(
                             filterSavedOnly = false
                             onSetFilter(StatusFilter.ALL)
                         },
-                        label = { Text("All") },
+                        label = { Text(stringResource(UiR.string.status_all)) },
                         shape = ChipShape,
                         colors = FilterChipDefaults.filterChipColors(
                             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -393,7 +399,7 @@ fun StatusBrowserScreenContent(
                             filterSavedOnly = false
                             onSetFilter(StatusFilter.IMAGES)
                         },
-                        label = { Text("Photos") },
+                        label = { Text(stringResource(UiR.string.status_images)) },
                         shape = ChipShape,
                         colors = FilterChipDefaults.filterChipColors(
                             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -408,7 +414,7 @@ fun StatusBrowserScreenContent(
                             filterSavedOnly = false
                             onSetFilter(StatusFilter.VIDEOS)
                         },
-                        label = { Text("Videos") },
+                        label = { Text(stringResource(UiR.string.status_videos)) },
                         shape = ChipShape,
                         colors = FilterChipDefaults.filterChipColors(
                             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -429,7 +435,7 @@ fun StatusBrowserScreenContent(
                                 )
                             }
                         } else null,
-                        label = { Text("Saved") },
+                        label = { Text(stringResource(UiR.string.status_saved)) },
                         shape = ChipShape,
                         colors = FilterChipDefaults.filterChipColors(
                             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -443,8 +449,8 @@ fun StatusBrowserScreenContent(
                 if (displayedStatuses.isEmpty() && !uiState.isScanning) {
                     EmptyState(
                         icon = Icons.Rounded.PhotoLibrary,
-                        title = "No Statuses Found",
-                        description = "Open WhatsApp and view status updates first. They will appear here automatically.",
+                        title = stringResource(UiR.string.status_empty_title),
+                        description = stringResource(UiR.string.status_empty_description),
                         modifier = Modifier.fillMaxSize()
                     )
                 } else {

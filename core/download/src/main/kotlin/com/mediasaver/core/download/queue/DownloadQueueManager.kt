@@ -105,6 +105,13 @@ class DownloadQueueManager(
         wifiOnlyDownload = current.wifiOnlyDownload
     }
 
+    private suspend fun ensureNetworkAllowed() {
+        syncSettingsIfAvailable()
+        if (wifiOnlyDownload && !isWifiConnectedProvider()) {
+            throw AppError.NetworkError(userMessage = WIFI_ONLY_MESSAGE)
+        }
+    }
+
     /**
      * Observable stream of all active (queued, downloading, muxing) tasks.
      */
@@ -129,12 +136,10 @@ class DownloadQueueManager(
         videoStream: StreamInfo,
         audioStream: StreamInfo? = null
     ) {
-        syncSettingsIfAvailable()
-        if (wifiOnlyDownload && !isWifiConnectedProvider()) {
-            throw AppError.NetworkError(userMessage = WIFI_ONLY_MESSAGE)
-        }
+        ensureNetworkAllowed()
         performStartupRecovery()
         queueMutex.withLock {
+            downloadWorker.clearPauseRequest(task.id)
             val itemId = when {
                 videoStream.mediaIndex != null -> "${task.mediaId}#slide_${videoStream.mediaIndex!! + 1}"
                 videoStream.isAudioOnly -> "${task.mediaId}#audio"
@@ -187,14 +192,131 @@ class DownloadQueueManager(
     }
 
     /**
+     * Pauses an active or queued download while keeping partial temp files for HTTP Range resume.
+     */
+    suspend fun pause(downloadId: String) {
+        queueMutex.withLock {
+            val task = downloadDao.getById(downloadId) ?: return
+            if (task.status !in setOf("QUEUED", "EXTRACTING", "DOWNLOADING")) return
+            downloadWorker.markPauseRequested(downloadId)
+            downloadDao.markPaused(downloadId)
+            activeJobs.remove(downloadId)?.cancel()
+        }
+        processNextInQueue()
+    }
+
+    /**
+     * Resumes a paused download task from any saved partial file on disk.
+     */
+    suspend fun resume(downloadId: String) {
+        ensureNetworkAllowed()
+        performStartupRecovery()
+        queueMutex.withLock {
+            val task = downloadDao.getById(downloadId) ?: return
+            if (task.status != DownloadStatus.PAUSED.name) return
+            downloadWorker.clearPauseRequest(downloadId)
+            downloadDao.updateStatus(downloadId, DownloadStatus.QUEUED.name)
+        }
+        DownloadService.start(context)
+        processNextInQueue()
+    }
+
+    /**
+     * Pauses all queued, extracting, or downloading tasks without deleting partial temp files.
+     */
+    suspend fun pauseAll() {
+        queueMutex.withLock {
+            val pausable = downloadDao.findActiveDownloads()
+                .filter { it.status in setOf("QUEUED", "EXTRACTING", "DOWNLOADING") }
+            for (task in pausable) {
+                downloadWorker.markPauseRequested(task.id)
+                downloadDao.markPaused(task.id)
+            }
+            for (task in pausable) {
+                activeJobs.remove(task.id)?.cancel()
+            }
+        }
+    }
+
+    /**
+     * Re-queues all paused download tasks.
+     */
+    suspend fun resumeAll() {
+        ensureNetworkAllowed()
+        performStartupRecovery()
+        val hasResumed = queueMutex.withLock {
+            val paused = downloadDao.findPausedDownloads()
+            if (paused.isEmpty()) return@withLock false
+            for (task in paused) {
+                downloadWorker.clearPauseRequest(task.id)
+                downloadDao.updateStatus(task.id, DownloadStatus.QUEUED.name)
+            }
+            true
+        }
+        if (hasResumed) {
+            DownloadService.start(context)
+            processNextInQueue()
+        }
+    }
+
+    /**
+     * Resets retry counters and re-queues all failed download tasks.
+     */
+    suspend fun retryAllFailed() {
+        ensureNetworkAllowed()
+        performStartupRecovery()
+        val hasRetried = queueMutex.withLock {
+            val failed = downloadDao.findFailedDownloads()
+            if (failed.isEmpty()) return@withLock false
+            for (task in failed) {
+                downloadWorker.clearPauseRequest(task.id)
+                downloadDao.updateRetryCount(task.id, 0)
+                downloadDao.updateStatus(task.id, DownloadStatus.QUEUED.name)
+            }
+            true
+        }
+        if (hasRetried) {
+            DownloadService.start(context)
+            processNextInQueue()
+        }
+    }
+
+    /**
+     * Cancels all active, queued, and paused downloads and removes their temporary files.
+     */
+    suspend fun cancelAll() {
+        queueMutex.withLock {
+            val targets = downloadDao.findActiveDownloads() + downloadDao.findPausedDownloads()
+            for (task in targets) {
+                downloadWorker.clearPauseRequest(task.id)
+                downloadDao.markCancelled(task.id)
+                activeJobs.remove(task.id)?.cancel()
+                tempFileManager.deleteAllTempFiles(task.id)
+            }
+        }
+    }
+
+    /**
      * Cancels an active or queued download.
      */
     suspend fun cancel(downloadId: String) {
+        downloadWorker.clearPauseRequest(downloadId)
         val job = activeJobs.remove(downloadId)
         job?.cancel()
 
         downloadDao.markCancelled(downloadId)
-        tempFileManager.deleteTempFile(tempFileManager.createTempDownloadFile(downloadId))
+        tempFileManager.deleteAllTempFiles(downloadId)
+        processNextInQueue()
+    }
+
+    /**
+     * Cancels any running job, cleans all temporary files, and removes the database record.
+     */
+    suspend fun delete(downloadId: String) {
+        downloadWorker.clearPauseRequest(downloadId)
+        activeJobs.remove(downloadId)?.cancel()
+        tempFileManager.deleteAllTempFiles(downloadId)
+        downloadDao.deleteById(downloadId)
         processNextInQueue()
     }
 
@@ -203,12 +325,10 @@ class DownloadQueueManager(
      * Manual retry is always permitted and resets the retry counter.
      */
     suspend fun retry(downloadId: String) {
-        syncSettingsIfAvailable()
-        if (wifiOnlyDownload && !isWifiConnectedProvider()) {
-            throw AppError.NetworkError(userMessage = WIFI_ONLY_MESSAGE)
-        }
+        ensureNetworkAllowed()
         performStartupRecovery()
         queueMutex.withLock {
+            downloadWorker.clearPauseRequest(downloadId)
             downloadDao.updateRetryCount(downloadId, 0)
             downloadDao.updateStatus(downloadId, DownloadStatus.QUEUED.name)
         }
@@ -241,11 +361,14 @@ class DownloadQueueManager(
                     else downloadDao.updateStatus(task.id, "QUEUED")
                 }
             }
-            val protected = downloadDao.findActiveDownloads().mapTo(mutableSetOf()) { it.id } + activeJobs.keys
+            val activeAfter = downloadDao.findActiveDownloads()
+            val pausedIds = downloadDao.findPausedDownloads().mapTo(mutableSetOf()) { it.id }
+            val protected = activeAfter.mapTo(mutableSetOf()) { it.id } + pausedIds + activeJobs.keys
             tempFileManager.cleanOrphanedTempFiles(protected)
-            if (protected.isNotEmpty()) DownloadService.start(context)
+            val shouldRunService = activeAfter.isNotEmpty() || activeJobs.isNotEmpty()
+            if (shouldRunService) DownloadService.start(context)
             recovered = true
-            protected.isNotEmpty()
+            shouldRunService
         }
         if (hasActive) processNextInQueue()
     }
@@ -315,7 +438,8 @@ class DownloadQueueManager(
                                 targetFileName = targetFileName,
                                 platform = platform,
                                 videoStream = videoStream,
-                                audioStream = audioStream
+                                audioStream = audioStream,
+                                subfolder = decodeSubfolder(taskEntity.description)
                             )
                             if (result.isFailure) {
                                 val error = result.exceptionOrNull() ?: Exception("Download failed")
@@ -374,7 +498,8 @@ class DownloadQueueManager(
             updatedAt = updatedAt,
             completedAt = completedAt,
             durationSeconds = durationSeconds,
-            errorMessage = errorMessage
+            errorMessage = errorMessage,
+            subfolder = decodeSubfolder(description)
         )
     }
 
@@ -385,6 +510,7 @@ class DownloadQueueManager(
             platform = platform.name,
             mediaId = mediaId,
             title = title,
+            description = encodeSubfolder(subfolder),
             thumbnailUrl = thumbnailUrl,
             status = status.name,
             selectedQuality = selectedQuality,
@@ -407,6 +533,19 @@ class DownloadQueueManager(
     companion object {
         internal const val WIFI_ONLY_MESSAGE =
             "Wi-Fi Only mode is enabled. Connect to Wi-Fi or disable Wi-Fi Only in Settings."
+
+        internal const val SUBFOLDER_PREFIX = "folder:"
+
+        internal fun encodeSubfolder(subfolder: String?): String? {
+            return subfolder?.trim()?.takeIf { it.isNotBlank() }?.let { "$SUBFOLDER_PREFIX$it" }
+        }
+
+        internal fun decodeSubfolder(description: String?): String? {
+            return description
+                ?.takeIf { it.startsWith(SUBFOLDER_PREFIX) }
+                ?.removePrefix(SUBFOLDER_PREFIX)
+                ?.takeIf { it.isNotBlank() }
+        }
 
         internal fun isWifiOrUnmeteredConnected(context: Context): Boolean {
             val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager

@@ -34,8 +34,14 @@ class HomeViewModelTest {
             queued = videoStream to audioStream
             queuedTasks.add(task)
         }
+        override suspend fun pause(downloadId: String) {}
+        override suspend fun resume(downloadId: String) {}
+        override suspend fun pauseAll() {}
+        override suspend fun resumeAll() {}
         override suspend fun cancel(downloadId: String) {}
+        override suspend fun cancelAll() {}
         override suspend fun retry(downloadId: String) {}
+        override suspend fun retryAllFailed() {}
         override suspend fun delete(downloadId: String) {}
         override suspend fun clearHistory() {}
     }
@@ -60,6 +66,7 @@ class HomeViewModelTest {
         override suspend fun updateSaveDownloadHistory(enabled: Boolean) {}
         override suspend fun updateAutoDeleteTempFiles(enabled: Boolean) {}
         override suspend fun updateThemeMode(themeMode: ThemeMode) {}
+        override suspend fun updateLanguageCode(languageCode: String) {}
         override suspend fun resetToDefaults() {}
     }
 
@@ -286,5 +293,85 @@ class HomeViewModelTest {
         assertEquals(listOf("vidM4aPrefer", "vidWebmOnly1"), queuedTasks.map { it.mediaId })
         assertEquals(listOf("m4a", "webm"), queuedTasks.map { it.selectedFormat })
         assertEquals(listOf("audio/mp4", "audio/webm"), queuedTasks.map { it.mimeType })
+    }
+
+    @Test fun `playlist downloads organize into playlist subfolder and number episodes without double numbering`() = kotlinx.coroutines.runBlocking {
+        queuedTasks.clear()
+        duplicateQualities.clear()
+        UpdateSettingsUseCase(settings).updatePreferredQuality("720p")
+
+        val playlistItems = (1..100).map { num ->
+            val title = when (num) {
+                1 -> "001 - Intro Lesson"
+                12 -> "Unnumbered Topic"
+                15 -> "15. Already Dotted"
+                else -> "Video $num"
+            }
+            PlaylistItem(
+                videoId = "vid_${num.toString().padStart(3, '0')}",
+                title = title,
+                author = "Teacher",
+                url = "https://www.youtube.com/watch?v=vid_${num.toString().padStart(3, '0')}"
+            )
+        }
+        val playlistMedia = MediaInfo(
+            id = "PLfolderTest",
+            platform = PlatformId.YOUTUBE,
+            title = "Lugha (Nah-wu): Full/Series",
+            sourceUrl = "https://www.youtube.com/playlist?list=PLfolderTest",
+            playlistItems = playlistItems,
+            totalPlaylistCount = 100
+        )
+
+        val audioStream = StreamInfo("https://cdn.example/audio.m4a", quality = "128 kbps", format = "m4a", mimeType = "audio/mp4", isAudioOnly = true, bitrate = 128)
+        val adapter = object : PlatformAdapter {
+            override val platformId = PlatformId.YOUTUBE
+            override val platformName = "YouTube"
+            override fun canHandle(url: String) = true
+            override suspend fun extractMediaInfo(url: String) = Result.success(playlistMedia)
+            override suspend fun resolveStreams(mediaId: String) = Result.success(listOf(audioStream))
+            override suspend fun healthCheck() = AdapterStatus.OPERATIONAL
+        }
+
+        val resolver = PlatformResolver(listOf(adapter))
+        val vm = HomeViewModel(
+            ProcessUrlUseCase(resolver),
+            ResolveStreamsUseCase(resolver),
+            EnqueueDownloadUseCase(downloads),
+            GetSettingsUseCase(settings)
+        )
+
+        vm.onUrlChange(playlistMedia.sourceUrl)
+        vm.processUrl()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        vm.onSelectAllPlaylistVideos(false)
+        vm.onTogglePlaylistVideo("vid_001")
+        vm.onTogglePlaylistVideo("vid_012")
+        vm.onTogglePlaylistVideo("vid_015")
+        vm.onSelectPlaylistQuality("Audio")
+        vm.startPlaylistBatchDownload()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(
+            listOf("001 - Intro Lesson", "012 - Unnumbered Topic", "15. Already Dotted"),
+            queuedTasks.map { it.title }
+        )
+        assertEquals(
+            listOf("Lugha (Nah-wu)_ Full_Series", "Lugha (Nah-wu)_ Full_Series", "Lugha (Nah-wu)_ Full_Series"),
+            queuedTasks.map { it.subfolder }
+        )
+
+        // Turning off both toggles preserves raw titles and clears subfolder
+        queuedTasks.clear()
+        vm.onSelectAllPlaylistVideos(false)
+        vm.onTogglePlaylistVideo("vid_012")
+        vm.onToggleOrganizeInPlaylistFolder(false)
+        vm.onToggleNumberPlaylistEpisodes(false)
+        vm.startPlaylistBatchDownload()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(listOf("Unnumbered Topic"), queuedTasks.map { it.title })
+        assertEquals(listOf(null), queuedTasks.map { it.subfolder })
     }
 }

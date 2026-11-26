@@ -16,6 +16,8 @@ data class HomeUiState(
     val selectedStream: StreamInfo? = null,
     val selectedPlaylistVideoIds: Set<String> = emptySet(),
     val playlistQuality: String = "720p",
+    val organizeInPlaylistFolder: Boolean = true,
+    val numberPlaylistEpisodes: Boolean = true,
     val playlistEnqueueProgress: String? = null,
     val isEnqueuing: Boolean = false,
     val downloadEnqueuedMessage: String? = null,

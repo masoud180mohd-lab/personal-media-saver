@@ -43,6 +43,15 @@ class TempFileManager @Inject constructor(
     }
 
     /**
+     * Deletes all primary and adaptive track temporary files associated with [downloadId].
+     */
+    fun deleteAllTempFiles(downloadId: String) {
+        deleteTempFile(createTempDownloadFile(downloadId))
+        deleteTempFile(createTempDownloadFile(downloadId, "_vid.tmp"))
+        deleteTempFile(createTempDownloadFile(downloadId, "_aud.tmp"))
+    }
+
+    /**
      * Checks if the device has sufficient internal storage space available.
      *
      * @param requiredBytes Bytes needed for download/muxing

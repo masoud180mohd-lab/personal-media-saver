@@ -16,7 +16,14 @@ class GetQueueDownloadsUseCase @Inject constructor(
     operator fun invoke(): Flow<List<DownloadTask>> {
         return downloadRepository.getAllDownloads().map { tasks ->
             tasks.filter { it.status != DownloadStatus.COMPLETED }
-                .sortedBy { if (it.status.isActive) 0 else 1 }
+                .sortedBy {
+                    when {
+                        it.status.isActive -> 0
+                        it.status == DownloadStatus.QUEUED -> 1
+                        it.status == DownloadStatus.PAUSED -> 2
+                        else -> 3
+                    }
+                }
         }
     }
 }

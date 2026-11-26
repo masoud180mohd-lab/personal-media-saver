@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -24,6 +25,7 @@ import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Refresh
@@ -55,12 +57,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.mediasaver.core.model.AppSettings
 import com.mediasaver.core.model.ThemeMode
+import com.mediasaver.core.ui.R as UiR
 import com.mediasaver.core.ui.components.AppSnackbar
 import com.mediasaver.core.ui.components.SectionHeader
 import com.mediasaver.core.ui.components.SettingsRow
@@ -92,6 +96,7 @@ fun SettingsScreen(
         onUpdatePreferredQuality = { viewModel.updatePreferredQuality(it) },
         onUpdateMaxConcurrentDownloads = { viewModel.updateMaxConcurrentDownloads(it) },
         onUpdateWifiOnlyDownload = { viewModel.updateWifiOnlyDownload(it) },
+        onUpdateLanguageCode = { viewModel.updateLanguageCode(it) },
         onResetToDefaults = { viewModel.resetToDefaults() },
     )
 }
@@ -105,6 +110,7 @@ fun SettingsScreenContent(
     onUpdatePreferredQuality: (String) -> Unit,
     onUpdateMaxConcurrentDownloads: (Int) -> Unit,
     onUpdateWifiOnlyDownload: (Boolean) -> Unit = {},
+    onUpdateLanguageCode: (String) -> Unit = {},
     onResetToDefaults: () -> Unit,
 ) {
     val haptic = LocalHapticFeedback.current
@@ -121,20 +127,20 @@ fun SettingsScreenContent(
             // Screen Header
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    text = "Settings",
+                    text = stringResource(UiR.string.settings_title),
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = "Preferences, storage & account configuration",
+                    text = stringResource(UiR.string.settings_subtitle),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
             // 1. Download Group
-            SectionHeader(title = "Download")
+            SectionHeader(title = stringResource(UiR.string.settings_section_download))
             Card(
                 shape = CardShape,
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
@@ -146,8 +152,8 @@ fun SettingsScreenContent(
                     // Preferred Quality
                     SettingsRow(
                         icon = Icons.Rounded.HighQuality,
-                        title = "Preferred Quality",
-                        subtitle = "Default stream resolution when available"
+                        title = stringResource(UiR.string.settings_preferred_quality),
+                        subtitle = stringResource(UiR.string.settings_preferred_quality_subtitle)
                     )
 
                     val qualities = listOf("1080p", "720p", "480p", "360p")
@@ -180,8 +186,8 @@ fun SettingsScreenContent(
                     // Max Concurrent Downloads
                     SettingsRow(
                         icon = Icons.Rounded.Speed,
-                        title = "Concurrent Downloads",
-                        subtitle = "Parallel downloads: ${uiState.settings.maxConcurrentDownloads}",
+                        title = stringResource(UiR.string.settings_concurrent_downloads),
+                        subtitle = stringResource(UiR.string.settings_concurrent_count, uiState.settings.maxConcurrentDownloads),
                         trailingContent = {
                             Text(
                                 text = "${uiState.settings.maxConcurrentDownloads}",
@@ -205,8 +211,8 @@ fun SettingsScreenContent(
                     // Wi-Fi Only Download
                     SettingsRow(
                         icon = Icons.Rounded.Wifi,
-                        title = "Wi-Fi Only",
-                        subtitle = "Save mobile data transfers",
+                        title = stringResource(UiR.string.settings_wifi_only_title),
+                        subtitle = stringResource(UiR.string.settings_wifi_only_subtitle),
                         trailingContent = {
                             Switch(
                                 checked = uiState.settings.wifiOnlyDownload,
@@ -221,7 +227,7 @@ fun SettingsScreenContent(
             }
 
             // 2. Storage Group
-            SectionHeader(title = "Storage")
+            SectionHeader(title = stringResource(UiR.string.settings_section_storage))
             Card(
                 shape = CardShape,
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
@@ -232,20 +238,20 @@ fun SettingsScreenContent(
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     SettingsRow(
                         icon = Icons.Rounded.Folder,
-                        title = "Scoped Gallery Folders",
-                        subtitle = "Movies/MediaSaver/ & Pictures/MediaSaver/"
+                        title = stringResource(UiR.string.settings_scoped_folders_title),
+                        subtitle = stringResource(UiR.string.settings_scoped_folders_subtitle)
                     )
 
                     SettingsRow(
                         icon = Icons.Rounded.Storage,
-                        title = "Storage Management",
-                        subtitle = "Temp disk cache is cleaned automatically after muxing"
+                        title = stringResource(UiR.string.settings_storage_management_title),
+                        subtitle = stringResource(UiR.string.settings_storage_management_subtitle)
                     )
                 }
             }
 
             // 3. Data & Privacy Group
-            SectionHeader(title = "Data & Privacy")
+            SectionHeader(title = stringResource(UiR.string.settings_section_privacy))
             Card(
                 shape = CardShape,
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
@@ -256,21 +262,21 @@ fun SettingsScreenContent(
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     SettingsRow(
                         icon = Icons.Rounded.Security,
-                        title = "Zero Telemetry",
-                        subtitle = "No crashlytics, third-party trackers, or ads"
+                        title = stringResource(UiR.string.settings_zero_telemetry_title),
+                        subtitle = stringResource(UiR.string.settings_privacy_storage_info)
                     )
 
                     SettingsRow(
                         icon = Icons.Rounded.Refresh,
-                        title = "Reset Preferences",
-                        subtitle = "Restore default settings",
+                        title = stringResource(UiR.string.settings_reset),
+                        subtitle = stringResource(UiR.string.settings_reset_subtitle),
                         onClick = { showResetDialog = true }
                     )
                 }
             }
 
             // 4. Appearance Group
-            SectionHeader(title = "Appearance")
+            SectionHeader(title = stringResource(UiR.string.settings_appearance))
             Card(
                 shape = CardShape,
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
@@ -281,8 +287,8 @@ fun SettingsScreenContent(
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     SettingsRow(
                         icon = Icons.Rounded.Palette,
-                        title = "Theme Mode",
-                        subtitle = "Select dark, light, or follow system"
+                        title = stringResource(UiR.string.settings_theme),
+                        subtitle = stringResource(UiR.string.settings_theme_subtitle)
                     )
 
                     Row(
@@ -290,26 +296,69 @@ fun SettingsScreenContent(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         ThemePillOption(
-                            label = "System",
+                            label = stringResource(UiR.string.settings_theme_system),
                             icon = Icons.Rounded.Palette,
                             isSelected = uiState.settings.themeMode == ThemeMode.SYSTEM,
                             onClick = { onUpdateThemeMode(ThemeMode.SYSTEM) },
                             modifier = Modifier.weight(1f)
                         )
                         ThemePillOption(
-                            label = "Light",
+                            label = stringResource(UiR.string.settings_theme_light),
                             icon = Icons.Rounded.LightMode,
                             isSelected = uiState.settings.themeMode == ThemeMode.LIGHT,
                             onClick = { onUpdateThemeMode(ThemeMode.LIGHT) },
                             modifier = Modifier.weight(1f)
                         )
                         ThemePillOption(
-                            label = "Dark",
+                            label = stringResource(UiR.string.settings_theme_dark),
                             icon = Icons.Rounded.DarkMode,
                             isSelected = uiState.settings.themeMode == ThemeMode.DARK,
                             onClick = { onUpdateThemeMode(ThemeMode.DARK) },
                             modifier = Modifier.weight(1f)
                         )
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    SettingsRow(
+                        icon = Icons.Rounded.Language,
+                        title = stringResource(UiR.string.settings_language),
+                        subtitle = stringResource(UiR.string.settings_language_subtitle)
+                    )
+
+                    val languageOptions = listOf(
+                        "" to stringResource(UiR.string.settings_language_system),
+                        "en" to stringResource(UiR.string.settings_language_english),
+                        "sw" to stringResource(UiR.string.settings_language_swahili)
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        languageOptions.forEach { (code, label) ->
+                            val isSelected = uiState.settings.languageCode.equals(code, ignoreCase = true)
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    onUpdateLanguageCode(code)
+                                },
+                                label = {
+                                    Text(
+                                        text = label,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                },
+                                shape = ChipShape,
+                                colors = FilterChipDefaults.filterChipColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            )
+                        }
                     }
                 }
             }
@@ -322,7 +371,7 @@ fun SettingsScreenContent(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "Personal Media Saver • v${uiState.appVersion}",
+                    text = stringResource(UiR.string.settings_app_version, uiState.appVersion),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                 )
@@ -346,14 +395,14 @@ fun SettingsScreenContent(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
             title = {
                 Text(
-                    text = "Reset settings?",
+                    text = stringResource(UiR.string.settings_reset_dialog_title),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
             },
             text = {
                 Text(
-                    text = "This will restore default download quality, concurrency, and appearance settings.",
+                    text = stringResource(UiR.string.settings_reset_dialog_message),
                     style = MaterialTheme.typography.bodyMedium
                 )
             },
@@ -365,12 +414,12 @@ fun SettingsScreenContent(
                         showResetDialog = false
                     }
                 ) {
-                    Text("Reset", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                    Text(stringResource(UiR.string.settings_reset_action), color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showResetDialog = false }) {
-                    Text("Cancel")
+                    Text(stringResource(UiR.string.common_cancel))
                 }
             }
         )

@@ -15,11 +15,20 @@ class ModelTest {
         assertTrue(DownloadStatus.CANCELLED.isTerminal)
         assertFalse(DownloadStatus.DOWNLOADING.isTerminal)
         assertFalse(DownloadStatus.QUEUED.isTerminal)
+        assertFalse(DownloadStatus.PAUSED.isTerminal)
 
         assertTrue(DownloadStatus.EXTRACTING.isActive)
         assertTrue(DownloadStatus.DOWNLOADING.isActive)
         assertTrue(DownloadStatus.MUXING.isActive)
+        assertFalse(DownloadStatus.PAUSED.isActive)
         assertFalse(DownloadStatus.COMPLETED.isActive)
+
+        assertTrue(DownloadStatus.QUEUED.isPausable)
+        assertTrue(DownloadStatus.EXTRACTING.isPausable)
+        assertTrue(DownloadStatus.DOWNLOADING.isPausable)
+        assertFalse(DownloadStatus.MUXING.isPausable)
+        assertFalse(DownloadStatus.PAUSED.isPausable)
+        assertFalse(DownloadStatus.COMPLETED.isPausable)
     }
 
     @Test

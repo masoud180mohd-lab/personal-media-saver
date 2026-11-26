@@ -8,6 +8,7 @@ enum class PlatformId {
     TIKTOK,
     WHATSAPP,
     INSTAGRAM,
+    FACEBOOK,
     UNKNOWN;
 
     companion object {

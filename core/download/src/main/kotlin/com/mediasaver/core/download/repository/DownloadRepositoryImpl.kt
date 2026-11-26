@@ -45,16 +45,40 @@ class DownloadRepositoryImpl @Inject constructor(
         downloadQueueManager.enqueue(task, videoStream, audioStream)
     }
 
+    override suspend fun pause(downloadId: String) {
+        downloadQueueManager.pause(downloadId)
+    }
+
+    override suspend fun resume(downloadId: String) {
+        downloadQueueManager.resume(downloadId)
+    }
+
+    override suspend fun pauseAll() {
+        downloadQueueManager.pauseAll()
+    }
+
+    override suspend fun resumeAll() {
+        downloadQueueManager.resumeAll()
+    }
+
     override suspend fun cancel(downloadId: String) {
         downloadQueueManager.cancel(downloadId)
+    }
+
+    override suspend fun cancelAll() {
+        downloadQueueManager.cancelAll()
     }
 
     override suspend fun retry(downloadId: String) {
         downloadQueueManager.retry(downloadId)
     }
 
+    override suspend fun retryAllFailed() {
+        downloadQueueManager.retryAllFailed()
+    }
+
     override suspend fun delete(downloadId: String) {
-        downloadDao.deleteById(downloadId)
+        downloadQueueManager.delete(downloadId)
     }
 
     override suspend fun clearHistory() {
@@ -97,7 +121,8 @@ class DownloadRepositoryImpl @Inject constructor(
             updatedAt = updatedAt,
             completedAt = completedAt,
             durationSeconds = durationSeconds,
-            errorMessage = errorMessage
+            errorMessage = errorMessage,
+            subfolder = DownloadQueueManager.decodeSubfolder(description)
         )
     }
 }
