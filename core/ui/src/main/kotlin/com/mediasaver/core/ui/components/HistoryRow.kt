@@ -51,6 +51,7 @@ import com.mediasaver.core.ui.R as UiR
 import com.mediasaver.core.ui.theme.CardShape
 import com.mediasaver.core.ui.theme.MediaSaverTheme
 import com.mediasaver.core.ui.theme.ThumbShape
+import com.mediasaver.core.ui.util.rememberMediaCoverModel
 import com.mediasaver.core.ui.util.shimmerBackground
 import java.io.File
 import java.text.SimpleDateFormat
@@ -95,12 +96,20 @@ fun HistoryRow(
                     .clip(ThumbShape)
                     .background(MaterialTheme.colorScheme.surfaceContainerHigh)
             ) {
-                val imageModel: Any? = when (val path = task.filePath?.takeIf { it.isNotBlank() }) {
-                    null -> task.thumbnailUrl
-                    else -> when {
-                        path.startsWith("content://") || path.startsWith("file://") -> Uri.parse(path)
-                        else -> File(path).takeIf { it.exists() } ?: task.thumbnailUrl
-                    }
+                val cleanThumbnailUrl = task.thumbnailUrl?.takeIf { it.isNotBlank() }
+                val resolvedModel = rememberMediaCoverModel(
+                    filePath = task.filePath,
+                    thumbnailUrl = cleanThumbnailUrl,
+                    mimeType = task.mimeType,
+                    selectedFormat = task.selectedFormat
+                )
+                var fallbackToThumbnail by remember(task.id, task.filePath, cleanThumbnailUrl) {
+                    mutableStateOf(false)
+                }
+                val imageModel: Any? = if (fallbackToThumbnail && cleanThumbnailUrl != null) {
+                    cleanThumbnailUrl
+                } else {
+                    resolvedModel
                 }
                 SubcomposeAsyncImage(
                     model = ImageRequest.Builder(LocalContext.current)
@@ -109,6 +118,11 @@ fun HistoryRow(
                         .build(),
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
+                    onError = {
+                        if (!fallbackToThumbnail && cleanThumbnailUrl != null && imageModel != cleanThumbnailUrl) {
+                            fallbackToThumbnail = true
+                        }
+                    },
                     loading = {
                         Box(
                             modifier = Modifier

@@ -1,24 +1,29 @@
 package com.mediasaver.feature.history.player
 
-import android.net.Uri
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
@@ -35,7 +40,6 @@ import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -57,12 +61,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -76,7 +84,7 @@ import com.mediasaver.core.ui.R as UiR
 import com.mediasaver.core.ui.theme.CardShape
 import com.mediasaver.core.ui.theme.ChipShape
 import com.mediasaver.core.ui.theme.ThumbShape
-import java.io.File
+import com.mediasaver.core.ui.util.rememberMediaCoverModel
 
 @Composable
 fun MiniAudioPlayerBar(
@@ -119,6 +127,10 @@ fun MiniAudioPlayerBar(
                 MediaCoverThumb(
                     filePath = item.filePath,
                     thumbnailUrl = item.thumbnailUrl,
+                    mimeType = item.mimeType,
+                    selectedFormat = item.selectedFormat,
+                    shape = ThumbShape,
+                    fallbackIconSize = 22.dp,
                     modifier = Modifier.size(44.dp)
                 )
                 Column(modifier = Modifier.weight(1f)) {
@@ -241,9 +253,17 @@ fun FullAudioPlayerContent(
         MediaCoverThumb(
             filePath = item.filePath,
             thumbnailUrl = item.thumbnailUrl,
+            mimeType = item.mimeType,
+            selectedFormat = item.selectedFormat,
+            shape = CardShape,
+            fallbackIconSize = 64.dp,
             modifier = Modifier
-                .size(180.dp)
-                .clip(CardShape)
+                .size(216.dp)
+                .border(
+                    width = 1.dp,
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                    shape = CardShape
+                )
         )
 
         Column(
@@ -383,11 +403,19 @@ fun InAppVideoPlayerDialog(
 ) {
     val item = state.currentItem ?: return
     var showControls by remember { mutableStateOf(true) }
+    val hostStatusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val hostNavBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
     Dialog(
         onDismissRequest = onClose,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
     ) {
+        val topInset = maxOf(WindowInsets.statusBars.asPaddingValues().calculateTopPadding(), hostStatusTop)
+        val bottomInset = maxOf(WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(), hostNavBottom)
+
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = Color.Black
@@ -417,13 +445,18 @@ fun InAppVideoPlayerDialog(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.45f))
+                            .background(Color.Black.copy(alpha = 0.25f))
                     ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .align(Alignment.TopCenter)
-                                .padding(horizontal = 12.dp, vertical = 16.dp),
+                                .background(
+                                    Brush.verticalGradient(
+                                        listOf(Color.Black.copy(alpha = 0.72f), Color.Transparent)
+                                    )
+                                )
+                                .padding(top = topInset + 8.dp, start = 12.dp, end = 12.dp, bottom = 12.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
@@ -496,7 +529,17 @@ fun InAppVideoPlayerDialog(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .align(Alignment.BottomCenter)
-                                .padding(horizontal = 16.dp, vertical = 20.dp),
+                                .background(
+                                    Brush.verticalGradient(
+                                        listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f))
+                                    )
+                                )
+                                .padding(
+                                    start = 16.dp,
+                                    end = 16.dp,
+                                    top = 24.dp,
+                                    bottom = maxOf(bottomInset + 16.dp, 36.dp)
+                                ),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             state.errorMessage?.let { error ->
@@ -515,7 +558,8 @@ fun InAppVideoPlayerDialog(
                             SpeedSelectorRow(
                                 selectedSpeed = state.playbackSpeed,
                                 onSelectSpeed = onSelectSpeed,
-                                labelColor = Color.White.copy(alpha = 0.85f)
+                                labelColor = Color.White.copy(alpha = 0.9f),
+                                isDarkOverlay = true
                             )
                         }
                     }
@@ -607,35 +651,70 @@ private fun SeekProgressBar(
 private fun SpeedSelectorRow(
     selectedSpeed: Float,
     onSelectSpeed: (Float) -> Unit,
-    labelColor: Color = MaterialTheme.colorScheme.onSurfaceVariant
+    labelColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    isDarkOverlay: Boolean = false
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-        verticalAlignment = Alignment.CenterVertically
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Text(
             text = stringResource(UiR.string.player_speed),
-            style = MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
             color = labelColor
         )
-        SUPPORTED_PLAYBACK_SPEEDS.forEach { speed ->
-            val selected = kotlin.math.abs(selectedSpeed - speed) < 0.01f
-            val label = if (speed == 1.0f || speed == 2.0f) "${speed.toInt()}x" else "${speed}x"
-            FilterChip(
-                selected = selected,
-                onClick = { onSelectSpeed(speed) },
-                label = {
-                    Text(
-                        text = label,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
-                    )
-                },
-                shape = ChipShape
-            )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            SUPPORTED_PLAYBACK_SPEEDS.forEach { speed ->
+                val selected = kotlin.math.abs(selectedSpeed - speed) < 0.01f
+                val label = if (speed == 1.0f || speed == 2.0f) "${speed.toInt()}x" else "${speed}x"
+                val containerColor = when {
+                    selected -> MaterialTheme.colorScheme.primary
+                    isDarkOverlay -> Color.White.copy(alpha = 0.16f)
+                    else -> MaterialTheme.colorScheme.surfaceContainerHigh
+                }
+                val contentColor = when {
+                    selected -> MaterialTheme.colorScheme.onPrimary
+                    isDarkOverlay -> Color.White
+                    else -> MaterialTheme.colorScheme.onSurface
+                }
+                val borderColor = when {
+                    selected -> MaterialTheme.colorScheme.primary
+                    isDarkOverlay -> Color.White.copy(alpha = 0.40f)
+                    else -> MaterialTheme.colorScheme.outlineVariant
+                }
+                Surface(
+                    selected = selected,
+                    onClick = { onSelectSpeed(speed) },
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 40.dp),
+                    shape = ChipShape,
+                    color = containerColor,
+                    contentColor = contentColor,
+                    border = BorderStroke(1.dp, borderColor)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 40.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                            maxLines = 1,
+                            softWrap = false,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -644,20 +723,32 @@ private fun SpeedSelectorRow(
 private fun MediaCoverThumb(
     filePath: String?,
     thumbnailUrl: String?,
+    mimeType: String? = null,
+    selectedFormat: String? = null,
+    shape: Shape = ThumbShape,
+    fallbackIconSize: Dp = 24.dp,
     modifier: Modifier = Modifier
 ) {
     Box(
         modifier = modifier
-            .clip(ThumbShape)
+            .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceContainerHighest),
         contentAlignment = Alignment.Center
     ) {
-        val imageModel: Any? = when (val path = filePath?.takeIf { it.isNotBlank() }) {
-            null -> thumbnailUrl
-            else -> when {
-                path.startsWith("content://") || path.startsWith("file://") -> Uri.parse(path)
-                else -> File(path).takeIf { it.exists() } ?: thumbnailUrl
-            }
+        val cleanThumbnailUrl = thumbnailUrl?.takeIf { it.isNotBlank() }
+        val resolvedModel = rememberMediaCoverModel(
+            filePath = filePath,
+            thumbnailUrl = cleanThumbnailUrl,
+            mimeType = mimeType,
+            selectedFormat = selectedFormat
+        )
+        var fallbackToThumbnail by remember(filePath, cleanThumbnailUrl, mimeType, selectedFormat) {
+            mutableStateOf(false)
+        }
+        val imageModel: Any? = if (fallbackToThumbnail && cleanThumbnailUrl != null) {
+            cleanThumbnailUrl
+        } else {
+            resolvedModel
         }
         SubcomposeAsyncImage(
             model = ImageRequest.Builder(LocalContext.current)
@@ -666,6 +757,11 @@ private fun MediaCoverThumb(
                 .build(),
             contentDescription = null,
             contentScale = ContentScale.Crop,
+            onError = {
+                if (!fallbackToThumbnail && cleanThumbnailUrl != null && imageModel != cleanThumbnailUrl) {
+                    fallbackToThumbnail = true
+                }
+            },
             modifier = Modifier.fillMaxSize(),
             error = {
                 Box(
@@ -675,7 +771,8 @@ private fun MediaCoverThumb(
                     Icon(
                         imageVector = Icons.Rounded.MusicNote,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(fallbackIconSize)
                     )
                 }
             }

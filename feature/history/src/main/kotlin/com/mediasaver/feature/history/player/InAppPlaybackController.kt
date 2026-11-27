@@ -4,9 +4,13 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.drawable.BitmapDrawable
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.media.MediaMetadata
 import android.media.MediaPlayer
 import android.media.PlaybackParams
 import android.media.session.MediaSession
@@ -16,10 +20,13 @@ import android.os.Handler
 import android.os.Looper
 import android.view.SurfaceHolder
 import androidx.core.content.ContextCompat
+import coil.imageLoader
+import coil.request.ImageRequest
 import com.mediasaver.core.model.DownloadTask
 import com.mediasaver.core.model.PlaybackState
 import com.mediasaver.core.model.SUPPORTED_PLAYBACK_SPEEDS
 import com.mediasaver.core.ui.R as UiR
+import com.mediasaver.core.ui.util.extractEmbeddedAudioCoverBytesSync
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,6 +39,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -52,11 +60,15 @@ class InAppPlaybackController @Inject constructor(
     private val _videoAspectRatio = MutableStateFlow(16f / 9f)
     val videoAspectRatio: StateFlow<Float> = _videoAspectRatio.asStateFlow()
 
+    private val _coverArt = MutableStateFlow<Bitmap?>(null)
+    val coverArt: StateFlow<Bitmap?> = _coverArt.asStateFlow()
+
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private var mediaPlayer: MediaPlayer? = null
     private var isPrepared = false
     private var surfaceHolder: SurfaceHolder? = null
     private var progressJob: Job? = null
+    private var coverArtJob: Job? = null
     private var lastPersistedAtMs = 0L
     private var hasAudioFocus = false
     private var noisyReceiverRegistered = false
@@ -149,10 +161,14 @@ class InAppPlaybackController @Inject constructor(
         )
 
         if (!isVideo) {
+            loadAudioCoverArt(task)
             runCatching {
                 ContextCompat.startForegroundService(context, AudioPlaybackService.startIntent(context))
             }
         } else {
+            coverArtJob?.cancel()
+            _coverArt.value = null
+            updateMediaSessionMetadata(task, null)
             runCatching { context.stopService(AudioPlaybackService.stopIntent(context)) }
         }
 
@@ -201,6 +217,7 @@ class InAppPlaybackController @Inject constructor(
                             errorMessage = null
                         )
                     }
+                    updateMediaSessionMetadata(_state.value.currentItem, _coverArt.value)
                     startPreparedPlayer(prepared, _state.value.playbackSpeed)
                 }
 
@@ -344,10 +361,13 @@ class InAppPlaybackController @Inject constructor(
 
     fun stop() {
         saveCurrentPositionNow()
+        coverArtJob?.cancel()
+        _coverArt.value = null
         releasePlayer()
         abandonAudioFocus()
         unregisterNoisyReceiver()
         _state.value = PlaybackState(playbackSpeed = positionStore.getPlaybackSpeed())
+        mediaSession.setMetadata(null)
         updateMediaSessionState()
         runCatching { context.stopService(AudioPlaybackService.stopIntent(context)) }
     }
@@ -496,7 +516,72 @@ class InAppPlaybackController @Inject constructor(
         )
     }
 
+    private fun loadAudioCoverArt(task: DownloadTask) {
+        coverArtJob?.cancel()
+        _coverArt.value = null
+        updateMediaSessionMetadata(task, null)
+        coverArtJob = scope.launch {
+            val bitmap = withContext(Dispatchers.IO) {
+                val embedded = extractEmbeddedAudioCoverBytesSync(context, task.filePath)
+                embedded?.let(::decodeBoundedBitmap) ?: task.thumbnailUrl
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { url ->
+                        runCatching {
+                            val result = context.imageLoader.execute(
+                                ImageRequest.Builder(context)
+                                    .data(url)
+                                    .size(MAX_COVER_ART_PX)
+                                    .allowHardware(false)
+                                    .build()
+                            )
+                            (result.drawable as? BitmapDrawable)?.bitmap
+                        }.getOrNull()
+                    }
+            }
+            if (_state.value.currentItem?.id == task.id) {
+                _coverArt.value = bitmap
+                updateMediaSessionMetadata(task, bitmap)
+            }
+        }
+    }
+
+    private fun decodeBoundedBitmap(bytes: ByteArray): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        var sampleSize = 1
+        while (bounds.outWidth / sampleSize > MAX_COVER_ART_PX ||
+            bounds.outHeight / sampleSize > MAX_COVER_ART_PX
+        ) {
+            sampleSize *= 2
+        }
+        val opts = BitmapFactory.Options().apply {
+            inSampleSize = sampleSize
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+        }
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+    }
+
+    private fun updateMediaSessionMetadata(task: DownloadTask?, bitmap: Bitmap?) {
+        if (task == null) {
+            mediaSession.setMetadata(null)
+            return
+        }
+        val duration = _state.value.durationMs.takeIf { it > 0L }
+            ?: ((task.durationSeconds ?: 0) * 1000L)
+        val builder = MediaMetadata.Builder()
+            .putString(MediaMetadata.METADATA_KEY_TITLE, task.title.orEmpty())
+            .putString(MediaMetadata.METADATA_KEY_ARTIST, task.artist.orEmpty())
+            .putString(MediaMetadata.METADATA_KEY_ALBUM, task.album.orEmpty())
+            .putLong(MediaMetadata.METADATA_KEY_DURATION, duration)
+        if (bitmap != null) {
+            builder.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, bitmap)
+        }
+        mediaSession.setMetadata(builder.build())
+    }
+
     companion object {
         private const val POSITION_SAVE_INTERVAL_MS = 5_000L
+        private const val MAX_COVER_ART_PX = 512
     }
 }

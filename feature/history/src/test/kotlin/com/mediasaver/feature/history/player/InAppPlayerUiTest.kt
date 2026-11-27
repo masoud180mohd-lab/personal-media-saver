@@ -112,6 +112,10 @@ class InAppPlayerUiTest {
         composeTestRule.onNodeWithText("01:05").assertIsDisplayed()
         composeTestRule.onNodeWithText("05:00").assertIsDisplayed()
 
+        listOf("0.75x", "1x", "1.25x", "1.5x", "1.75x", "2x").forEach { speedLabel ->
+            composeTestRule.onNodeWithText(speedLabel).performScrollTo().assertIsDisplayed()
+        }
+
         composeTestRule.onNodeWithText("1.5x").performScrollTo().performClick()
         assertEquals(1.5f, selectedSpeed, 0.001f)
 
@@ -126,5 +130,41 @@ class InAppPlayerUiTest {
 
         composeTestRule.onNodeWithText("Open in another app").performScrollTo().performClick()
         assertTrue(openedExternal)
+    }
+
+    @Test
+    fun `InAppVideoPlayerDialog renders all six speed options clearly and dispatches 2x selection`() {
+        var selectedSpeed = 1.0f
+        val state = PlaybackState(
+            currentItem = sampleTask.copy(id = "video_1", title = "Sample Video"),
+            queue = listOf(sampleTask),
+            isVideo = true,
+            isPlaying = true,
+            positionMs = 10_000L,
+            durationMs = 90_000L,
+            playbackSpeed = 1.0f
+        )
+
+        composeTestRule.setContent {
+            InAppVideoPlayerDialog(
+                state = state,
+                aspectRatio = 16f / 9f,
+                onAttachSurface = {},
+                onTogglePlayPause = {},
+                onSeekTo = {},
+                onRewind10 = {},
+                onForward10 = {},
+                onSelectSpeed = { selectedSpeed = it },
+                onOpenExternal = {},
+                onClose = {}
+            )
+        }
+
+        listOf("0.75x", "1x", "1.25x", "1.5x", "1.75x", "2x").forEach { speedLabel ->
+            composeTestRule.onNodeWithText(speedLabel).assertIsDisplayed()
+        }
+
+        composeTestRule.onNodeWithText("2x").performClick()
+        assertEquals(2.0f, selectedSpeed, 0.001f)
     }
 }
