@@ -8,6 +8,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.io.IOException
 import java.net.URI
 import java.net.URISyntaxException
+import java.util.concurrent.TimeUnit
 import kotlin.math.PI
 
 object TwitterUrlParser {
@@ -113,6 +114,10 @@ internal fun syndicationRequest(url: String) = Request.Builder().url(url)
 internal fun OkHttpClient.twitterClient(hosts: Set<String>): OkHttpClient = newBuilder()
     .cookieJar(CookieJar.NO_COOKIES).cache(null)
     .authenticator(Authenticator.NONE).proxyAuthenticator(Authenticator.NONE)
+    .connectTimeout(10, TimeUnit.SECONDS)
+    .readTimeout(10, TimeUnit.SECONDS)
+    .callTimeout(15, TimeUnit.SECONDS)
+    .retryOnConnectionFailure(false)
     .followRedirects(false).followSslRedirects(false)
     .apply {
         val chain = interceptors()

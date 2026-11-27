@@ -16,6 +16,7 @@ import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.OndemandVideo
 import androidx.compose.material.icons.rounded.PlayCircle
+import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material.icons.rounded.Tag
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -33,6 +34,7 @@ import com.mediasaver.core.model.PlatformId
 import com.mediasaver.core.ui.theme.MediaSaverTheme
 import com.mediasaver.core.ui.theme.PlatformFacebook
 import com.mediasaver.core.ui.theme.PlatformInstagram
+import com.mediasaver.core.ui.theme.PlatformPinterest
 import com.mediasaver.core.ui.theme.PlatformTikTok
 import com.mediasaver.core.ui.theme.PlatformTwitter
 import com.mediasaver.core.ui.theme.PlatformUnknown
@@ -46,6 +48,7 @@ fun PlatformId.getBrandColor(): Color = when (this) {
     PlatformId.INSTAGRAM -> PlatformInstagram
     PlatformId.FACEBOOK -> PlatformFacebook
     PlatformId.TWITTER -> PlatformTwitter
+    PlatformId.PINTEREST -> PlatformPinterest
     PlatformId.UNKNOWN -> PlatformUnknown
 }
 
@@ -56,6 +59,7 @@ fun PlatformId.getIcon(): ImageVector = when (this) {
     PlatformId.INSTAGRAM -> Icons.Rounded.CameraAlt
     PlatformId.FACEBOOK -> Icons.Rounded.OndemandVideo
     PlatformId.TWITTER -> Icons.Rounded.Tag
+    PlatformId.PINTEREST -> Icons.Rounded.PushPin
     PlatformId.UNKNOWN -> Icons.Rounded.Link
 }
 
@@ -66,6 +70,7 @@ fun PlatformId.getDisplayName(): String = when (this) {
     PlatformId.INSTAGRAM -> "Instagram"
     PlatformId.FACEBOOK -> "Facebook"
     PlatformId.TWITTER -> "X (Twitter)"
+    PlatformId.PINTEREST -> "Pinterest"
     PlatformId.UNKNOWN -> "Generic"
 }
 

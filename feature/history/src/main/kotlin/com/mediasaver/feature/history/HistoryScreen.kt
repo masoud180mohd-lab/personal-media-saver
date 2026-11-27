@@ -74,6 +74,7 @@ import java.util.Locale
 @Composable
 fun HistoryScreen(
     modifier: Modifier = Modifier,
+    onPlayInApp: ((task: DownloadTask, queue: List<DownloadTask>, isVideo: Boolean) -> Unit)? = null,
     viewModel: HistoryViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -92,7 +93,34 @@ fun HistoryScreen(
         uiState = uiState,
         snackbarHostState = snackbarHostState,
         onClearAll = { viewModel.showClearAllDialog(true) },
-        onOpenMedia = { openMedia(context, it) },
+        onOpenMedia = { task ->
+            val path = task.filePath
+            val mime = path?.takeIf { it.isNotBlank() }?.let { rawPath ->
+                val uri = if (rawPath.startsWith("content://") || rawPath.startsWith("file://")) {
+                    Uri.parse(rawPath)
+                } else {
+                    Uri.fromFile(File(rawPath))
+                }
+                resolveMediaMimeType(context, uri, task)
+            }
+            val isAudio = mime?.startsWith("audio/") == true
+            val isVideo = mime?.startsWith("video/") == true
+            if (onPlayInApp != null && !path.isNullOrBlank() && (isAudio || isVideo)) {
+                val siblingQueue = uiState.completedItems.filter { candidate ->
+                    val cPath = candidate.filePath?.takeIf { it.isNotBlank() } ?: return@filter false
+                    val cUri = if (cPath.startsWith("content://") || cPath.startsWith("file://")) {
+                        Uri.parse(cPath)
+                    } else {
+                        Uri.fromFile(File(cPath))
+                    }
+                    val cMime = resolveMediaMimeType(context, cUri, candidate)
+                    if (isAudio) cMime.startsWith("audio/") else cMime.startsWith("video/")
+                }.ifEmpty { listOf(task) }
+                onPlayInApp(task, siblingQueue, isVideo)
+            } else {
+                openMediaExternally(context, task)
+            }
+        },
         onShareMedia = { shareMedia(context, it) },
         onDeleteMedia = { viewModel.requestDeleteItem(it) },
         onConfirmDelete = { viewModel.confirmDeleteItem() },
@@ -258,7 +286,8 @@ fun HistoryScreenContent(
                         PlatformId.WHATSAPP to "WhatsApp",
                         PlatformId.INSTAGRAM to "Instagram",
                         PlatformId.FACEBOOK to "Facebook",
-                        PlatformId.TWITTER to "X"
+                        PlatformId.TWITTER to "X",
+                        PlatformId.PINTEREST to "Pinterest"
                     )
 
                     platforms.forEach { (platform, label) ->
@@ -472,7 +501,7 @@ internal fun resolveMediaMimeType(context: Context, uri: Uri, task: DownloadTask
     }
 }
 
-private fun openMedia(context: Context, task: DownloadTask) {
+fun openMediaExternally(context: Context, task: DownloadTask) {
     val path = task.filePath ?: return
     try {
         val uri = if (path.startsWith("content://")) {

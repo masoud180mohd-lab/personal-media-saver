@@ -122,6 +122,7 @@ class MediaStoreManager @Inject constructor(
                 PlatformId.INSTAGRAM -> "Instagram"
                 PlatformId.FACEBOOK -> "Facebook"
                 PlatformId.TWITTER -> "X"
+                PlatformId.PINTEREST -> "Pinterest"
                 PlatformId.UNKNOWN -> "Downloads"
             }
             val safeSubfolder = subfolder

@@ -307,6 +307,7 @@ fun HomeScreenContent(
                                 PlatformId.INSTAGRAM -> "Instagram"
                                 PlatformId.FACEBOOK -> "Facebook"
                                 PlatformId.TWITTER -> "X"
+                                PlatformId.PINTEREST -> "Pinterest"
                                 PlatformId.UNKNOWN -> "Downloads"
                             }
                             PlaylistSelectionCard(

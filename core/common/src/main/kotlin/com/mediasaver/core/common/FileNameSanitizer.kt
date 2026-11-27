@@ -73,6 +73,7 @@ object FileNameSanitizer {
             PlatformId.INSTAGRAM -> "Instagram"
             PlatformId.FACEBOOK -> "Facebook"
             PlatformId.TWITTER -> "X"
+            PlatformId.PINTEREST -> "Pinterest"
             PlatformId.UNKNOWN -> "Media"
         }
 

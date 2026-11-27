@@ -13,6 +13,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 
 object FacebookUrlParser {
     private val pages = PlatformWebDomain("facebook.com")
@@ -87,6 +88,10 @@ internal fun OkHttpClient.facebookPublicClient(): OkHttpClient {
         .cache(null)
         .authenticator(Authenticator.NONE)
         .proxyAuthenticator(Authenticator.NONE)
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(10, TimeUnit.SECONDS)
+        .callTimeout(15, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(false)
         .followRedirects(false)
         .followSslRedirects(false)
 

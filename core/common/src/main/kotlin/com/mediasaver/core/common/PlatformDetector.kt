@@ -39,6 +39,22 @@ object PlatformDetector {
         "t.co"
     )
 
+    private val PINTEREST_HOSTS = setOf(
+        "pinterest.com",
+        "pinterest.co.uk",
+        "pinterest.de",
+        "pinterest.fr",
+        "pinterest.ca",
+        "pinterest.jp",
+        "pinterest.es",
+        "pinterest.it",
+        "pinterest.pt",
+        "pinterest.com.au",
+        "pinterest.com.mx",
+        "pinterest.ph",
+        "pin.it"
+    )
+
     /**
      * Identifies the platform from an input URL string.
      *
@@ -83,6 +99,10 @@ object PlatformDetector {
 
         if (TWITTER_HOSTS.any { normalizedHost == it || normalizedHost.endsWith(".$it") }) {
             return PlatformId.TWITTER
+        }
+
+        if (PINTEREST_HOSTS.any { normalizedHost == it || normalizedHost.endsWith(".$it") }) {
+            return PlatformId.PINTEREST
         }
 
         return PlatformId.UNKNOWN

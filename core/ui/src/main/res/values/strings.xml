@@ -187,4 +187,19 @@
     <string name="common_delete">Delete</string>
     <string name="common_done">Done</string>
     <string name="common_back">Back</string>
+
+    <string name="player_play">Play</string>
+    <string name="player_pause">Pause</string>
+    <string name="player_rewind_10">Rewind 10 seconds</string>
+    <string name="player_forward_10">Forward 10 seconds</string>
+    <string name="player_previous">Previous</string>
+    <string name="player_next">Next</string>
+    <string name="player_speed">Speed</string>
+    <string name="player_open_external">Open in another app</string>
+    <string name="player_close">Close</string>
+    <string name="player_now_playing">Now Playing</string>
+    <string name="player_playback_error">Unable to play this media file.</string>
+    <string name="player_notification_channel_name">Media Playback</string>
+    <string name="player_notification_channel_desc">Background audio player controls</string>
+    <string name="player_video_title_fallback">Saved Media</string>
 </resources>

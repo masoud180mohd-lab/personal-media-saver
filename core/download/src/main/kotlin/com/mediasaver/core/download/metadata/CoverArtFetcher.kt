@@ -141,7 +141,8 @@ class CoverArtFetcher @Inject constructor(
             "ibytedtos.com",
             "byteoversea.com",
             "muscdn.com",
-            "twimg.com"
+            "twimg.com",
+            "pinimg.com"
         )
 
         private const val USER_AGENT =

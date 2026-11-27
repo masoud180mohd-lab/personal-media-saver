@@ -46,6 +46,7 @@ include(":platform:whatsapp")
 include(":platform:instagram")
 include(":platform:facebook")
 include(":platform:twitter")
+include(":platform:pinterest")
 
 // Feature modules
 include(":feature:home")

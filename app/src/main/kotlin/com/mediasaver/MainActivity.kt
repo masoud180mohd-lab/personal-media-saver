@@ -27,6 +27,7 @@ import androidx.core.content.ContextCompat
 import com.mediasaver.core.domain.usecase.GetActiveDownloadsUseCase
 import com.mediasaver.core.domain.usecase.GetSettingsUseCase
 import com.mediasaver.core.model.ThemeMode
+import com.mediasaver.feature.history.player.InAppPlaybackController
 import com.mediasaver.ui.MediaSaverApp
 import com.mediasaver.core.ui.theme.MediaSaverTheme
 import dagger.hilt.android.AndroidEntryPoint
@@ -44,6 +45,9 @@ class MainActivity : ComponentActivity() {
 
     @Inject
     lateinit var getActiveDownloadsUseCase: GetActiveDownloadsUseCase
+
+    @Inject
+    lateinit var playbackController: InAppPlaybackController
 
     private val sharedUrlState = mutableStateOf<String?>(null)
     private val requestNotificationPermission =
@@ -101,6 +105,7 @@ class MainActivity : ComponentActivity() {
                             sharedUrl = sharedUrlState.value,
                             onSharedUrlConsumed = { sharedUrlState.value = null },
                             getActiveDownloadsUseCase = getActiveDownloadsUseCase,
+                            playbackController = playbackController
                         )
                     }
                 }
@@ -113,6 +118,13 @@ class MainActivity : ComponentActivity() {
         private val localizedResources: Resources
     ) : ContextWrapper(base) {
         override fun getResources(): Resources = localizedResources
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (::playbackController.isInitialized && playbackController.state.value.isVideo) {
+            playbackController.pause()
+        }
     }
 
     override fun onNewIntent(intent: Intent) {

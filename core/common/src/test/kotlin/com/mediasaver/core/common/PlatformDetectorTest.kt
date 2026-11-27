@@ -95,6 +95,13 @@ class PlatformDetectorTest {
     }
 
     @Test
+    fun `detects Pinterest pin and short URLs`() {
+        assertEquals(PlatformId.PINTEREST, PlatformDetector.detect("https://www.pinterest.com/pin/123/"))
+        assertEquals(PlatformId.PINTEREST, PlatformDetector.detect("https://www.pinterest.co.uk/pin/123/"))
+        assertEquals(PlatformId.PINTEREST, PlatformDetector.detect("https://pin.it/Ab9"))
+    }
+
+    @Test
     fun `detects WhatsApp local URI scheme`() {
         val url = "whatsapp://status/media_item"
         assertEquals(PlatformId.WHATSAPP, PlatformDetector.detect(url))
@@ -117,6 +124,7 @@ class PlatformDetectorTest {
         assertTrue(PlatformDetector.isSupported("https://instagram.com/p/xyz"))
         assertTrue(PlatformDetector.isSupported("https://facebook.com/watch/?v=123"))
         assertTrue(PlatformDetector.isSupported("https://x.com/user/status/123"))
+        assertTrue(PlatformDetector.isSupported("https://www.pinterest.com/pin/123/"))
         assertFalse(PlatformDetector.isSupported("https://vimeo.com/12345"))
     }
 }

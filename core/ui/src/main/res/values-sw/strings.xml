@@ -187,4 +187,19 @@
     <string name="common_delete">Futa</string>
     <string name="common_done">Nimemaliza</string>
     <string name="common_back">Rudi</string>
+
+    <string name="player_play">Cheza</string>
+    <string name="player_pause">Simamisha</string>
+    <string name="player_rewind_10">Rudisha sekunde 10</string>
+    <string name="player_forward_10">Sogeza sekunde 10</string>
+    <string name="player_previous">Iliyotangulia</string>
+    <string name="player_next">Inayofuata</string>
+    <string name="player_speed">Kasi</string>
+    <string name="player_open_external">Fungua kwenye programu nyingine</string>
+    <string name="player_close">Funga</string>
+    <string name="player_now_playing">Inacheza Sasa</string>
+    <string name="player_playback_error">Imeshindikana kucheza faili hili.</string>
+    <string name="player_notification_channel_name">Uchezaji wa Media</string>
+    <string name="player_notification_channel_desc">Vidhibiti vya kicheza sauti nyuma ya mfumo</string>
+    <string name="player_video_title_fallback">Media Iliyohifadhiwa</string>
 </resources>

@@ -268,6 +268,7 @@ class DownloadWorker @Inject constructor(
             PlatformId.INSTAGRAM -> "https://www.instagram.com" to PlatformWebDomain("instagram.com", "cdninstagram.com", "fbcdn.net")
             PlatformId.FACEBOOK -> "https://www.facebook.com" to PlatformWebDomain("facebook.com", "fb.watch", "fbcdn.net")
             PlatformId.TWITTER -> "https://x.com" to PlatformWebDomain("x.com", "twitter.com", "t.co", "twimg.com")
+            PlatformId.PINTEREST -> "https://www.pinterest.com" to PlatformWebDomain("pinterest.com", "pinimg.com", "pin.it")
             PlatformId.YOUTUBE -> "https://www.youtube.com" to PlatformWebDomain("youtube.com", "googlevideo.com")
             PlatformId.TIKTOK -> "https://www.tiktok.com" to PlatformWebDomain(
                 "tiktok.com", "tiktokcdn.com", "tiktokcdn-us.com",

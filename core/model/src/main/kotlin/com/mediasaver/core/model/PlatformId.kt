@@ -10,6 +10,7 @@ enum class PlatformId {
     INSTAGRAM,
     FACEBOOK,
     TWITTER,
+    PINTEREST,
     UNKNOWN;
 
     companion object {

@@ -113,6 +113,7 @@ dependencies {
     implementation(project(":platform:instagram"))
     implementation(project(":platform:facebook"))
     implementation(project(":platform:twitter"))
+    implementation(project(":platform:pinterest"))
 
     // Feature Modules
     implementation(project(":feature:home"))
